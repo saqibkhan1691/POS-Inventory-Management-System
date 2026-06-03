@@ -1,50 +1,74 @@
 import 'package:flutter/material.dart';
 import '../core/theme.dart';
+import '../core/app_colors_ext.dart';
+import '../repositories/product_repository.dart';
 
 /// ─────────────────────────────────────────────────────────────
-///  ADD PRODUCT SCREEN  –  Form for creating/editing products
-///  Sections: Basic Info → Pricing & Tax → Inventory & Barcode
-///  File: lib/screens/add_product_screen.dart
+///  ADD PRODUCT SCREEN  –  lib/screens/add_product_screen.dart
+///  Now saves to SQLite via ProductRepository
 /// ─────────────────────────────────────────────────────────────
 class AddProductScreen extends StatefulWidget {
   const AddProductScreen({super.key});
-
-  @override
-  State<AddProductScreen> createState() => _AddProductScreenState();
+  @override State<AddProductScreen> createState() => _AddProductScreenState();
 }
 
 class _AddProductScreenState extends State<AddProductScreen> {
-  final _formKey   = GlobalKey<FormState>();
-  bool _autoSku    = true;
+  final _repo    = ProductRepository();
+  final _formKey = GlobalKey<FormState>();
+  bool _saving   = false;
+  bool _autoSku  = true;
 
-  // ── Form controllers ──────────────────────────────────────
-  final _nameCtrl      = TextEditingController();
-  final _skuCtrl       = TextEditingController();
-  final _purchaseCtrl  = TextEditingController();
-  final _sellingCtrl   = TextEditingController();
-  final _alertQtyCtrl  = TextEditingController(text: '5');
-  final _descCtrl      = TextEditingController();
+  final _nameCtrl     = TextEditingController();
+  final _skuCtrl      = TextEditingController();
+  final _purchaseCtrl = TextEditingController();
+  final _sellingCtrl  = TextEditingController();
+  final _alertQtyCtrl = TextEditingController(text: '5');
+  final _descCtrl     = TextEditingController();
+  final _stockCtrl    = TextEditingController(text: '0');
 
   String _brand       = 'In-House';
   String _category    = '';
-  String _taxType     = 'GST 5%';
+  String _taxType     = '5';
   String _barcodeType = 'CODE128';
+
+  String _customBrand    = '';
+  String _customCategory = '';
+  List<String> _extraBrands     = [];
+  List<String> _extraCategories = [];
 
   @override
   void dispose() {
-    _nameCtrl.dispose();
-    _skuCtrl.dispose();
-    _purchaseCtrl.dispose();
-    _sellingCtrl.dispose();
-    _alertQtyCtrl.dispose();
-    _descCtrl.dispose();
+    for (final c in [_nameCtrl, _skuCtrl, _purchaseCtrl, _sellingCtrl,
+      _alertQtyCtrl, _descCtrl, _stockCtrl]) c.dispose();
     super.dispose();
   }
 
-  void _onSave() {
-    if (_formKey.currentState?.validate() ?? false) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+  // Auto-generate barcode from name + timestamp
+  String _generateBarcode() {
+    final ts = DateTime.now().millisecondsSinceEpoch.toString();
+    return ts.substring(ts.length - 8);
+  }
+
+  Future<void> _onSave() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() => _saving = true);
+    try {
+      final barcode = _autoSku ? _generateBarcode() : _skuCtrl.text.trim();
+      await _repo.addProduct(
+        name:          _nameCtrl.text.trim(),
+        barcode:       barcode,
+        category:      _category,
+        brand:         _brand,
+        purchasePrice: double.tryParse(_purchaseCtrl.text) ?? 0,
+        sellingPrice:  double.tryParse(_sellingCtrl.text) ?? 0,
+        taxRate:       (double.tryParse(_taxType) ?? 5) / 100,
+        stock:         int.tryParse(_stockCtrl.text) ?? 0,
+        alertQty:      int.tryParse(_alertQtyCtrl.text) ?? 5,
+        barcodeType:   _barcodeType,
+        description:   _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Row(children: [
             Icon(Icons.check_circle_outline, color: AppColors.white, size: 18),
             SizedBox(width: 8),
@@ -53,432 +77,255 @@ class _AddProductScreenState extends State<AddProductScreen> {
           backgroundColor: AppColors.teal600,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      );
+          duration: const Duration(seconds: 2),
+        ));
+        _resetForm();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: AppColors.red500,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
+  void _resetForm() {
+    _nameCtrl.clear(); _skuCtrl.clear(); _purchaseCtrl.clear();
+    _sellingCtrl.clear(); _descCtrl.clear();
+    _stockCtrl.text = '0'; _alertQtyCtrl.text = '5';
+    setState(() { _brand = 'In-House'; _category = ''; _autoSku = true; });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.white,
+        color: c.cardBg,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.gray200),
+        border: Border.all(color: c.border),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 4)],
       ),
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          // ── Header ────────────────────────────────────────
-          _ScreenHeader(),
-
-          // ── Form body ─────────────────────────────────────
-          Expanded(
-            child: Form(
-              key: _formKey,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(28),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _Section(
-                      title: 'Basic Information',
-                      child: Column(
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                flex: 2,
-                                child: _Field(
-                                  label: 'Product Name *',
-                                  child: TextFormField(
-                                    controller: _nameCtrl,
-                                    validator: (v) =>
-                                    (v?.isEmpty ?? true) ? 'Required' : null,
-                                    decoration: _inputDeco(
-                                        'e.g. Kanjeevaram Silk Saree'),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: _Field(
-                                  label: 'Brand',
-                                  child: _DropdownField(
-                                    value: _brand,
-                                    items: const [
-                                      'In-House', 'Nalli', 'Pothys', 'RMKV'
-                                    ],
-                                    onChanged: (v) =>
-                                        setState(() => _brand = v ?? _brand),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: _Field(
-                                  label: 'Category *',
-                                  child: _DropdownField(
-                                    value: _category.isEmpty ? null : _category,
-                                    hint: 'Select Category…',
-                                    items: const [
-                                      'Silk Sarees', 'Cotton Sarees',
-                                      'Designer Wear', 'Accessories'
-                                    ],
-                                    onChanged: (v) =>
-                                        setState(() => _category = v ?? ''),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          _Field(
-                            label: 'Description',
-                            child: TextFormField(
-                              controller: _descCtrl,
-                              maxLines: 3,
-                              decoration: _inputDeco(
-                                  'Optional product description…'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 28),
-
-                    _Section(
-                      title: 'Pricing & Tax',
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: _Field(
-                              label: 'Purchase Price (₹) *',
-                              child: TextFormField(
-                                controller: _purchaseCtrl,
-                                keyboardType: TextInputType.number,
-                                validator: (v) =>
-                                (v?.isEmpty ?? true) ? 'Required' : null,
-                                decoration: _inputDeco('0.00'),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _Field(
-                              label: 'Selling Price (₹) *',
-                              child: TextFormField(
-                                controller: _sellingCtrl,
-                                keyboardType: TextInputType.number,
-                                validator: (v) =>
-                                (v?.isEmpty ?? true) ? 'Required' : null,
-                                decoration: _inputDeco('0.00'),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _Field(
-                              label: 'Tax Type',
-                              child: _DropdownField(
-                                value: _taxType,
-                                items: const [
-                                  'GST 5%', 'GST 12%', 'GST 18%', 'Tax Free'
-                                ],
-                                onChanged: (v) =>
-                                    setState(() => _taxType = v ?? _taxType),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 28),
-
-                    _Section(
-                      title: 'Inventory & Tracking',
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: _Field(
-                              label: 'SKU',
-                              labelSuffix: Row(
-                                children: [
-                                  Checkbox(
-                                    value: _autoSku,
-                                    onChanged: (v) =>
-                                        setState(() => _autoSku = v ?? true),
-                                    activeColor: AppColors.teal600,
-                                    materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                  const Text('Auto Generate',
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: AppColors.gray500)),
-                                ],
-                              ),
-                              child: TextFormField(
-                                controller: _skuCtrl,
-                                enabled: !_autoSku,
-                                decoration: _inputDeco(
-                                    _autoSku ? 'Auto-generated' : 'Enter SKU'),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _Field(
-                              label: 'Barcode Type',
-                              child: _DropdownField(
-                                value: _barcodeType,
-                                items: const ['CODE128', 'EAN-13', 'UPC-A'],
-                                onChanged: (v) => setState(
-                                        () => _barcodeType = v ?? _barcodeType),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _Field(
-                              label: 'Alert Quantity',
-                              child: TextFormField(
-                                controller: _alertQtyCtrl,
-                                keyboardType: TextInputType.number,
-                                decoration: _inputDeco('5'),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 40),
-                  ],
-                ),
-              ),
-            ),
+      child: Column(children: [
+        // Header
+        Container(
+          padding: const EdgeInsets.fromLTRB(24, 18, 24, 16),
+          decoration: BoxDecoration(
+            color: c.tableHeader,
+            border: Border(bottom: BorderSide(color: c.border)),
           ),
-
-          // ── Footer actions ────────────────────────────────
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            decoration: const BoxDecoration(
-              color: AppColors.gray50,
-              border: Border(top: BorderSide(color: AppColors.gray200)),
-            ),
-            child: Row(
-              children: [
-                OutlinedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.barcode_reader, size: 18),
-                  label: const Text('Generate & Print Barcode'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.gray700,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    side: const BorderSide(color: AppColors.gray300),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                  ),
-                ),
-                const Spacer(),
-                OutlinedButton(
-                  onPressed: () {},
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.gray700,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 12),
-                    side: const BorderSide(color: AppColors.gray300),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                  ),
-                  child: const Text('Cancel',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
-                ),
-                const SizedBox(width: 10),
-                ElevatedButton.icon(
-                  onPressed: _onSave,
-                  icon: const Icon(Icons.save_outlined, size: 18),
-                  label: const Text('Save Product'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.teal600,
-                    foregroundColor: AppColors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 12),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                    elevation: 0,
-                    textStyle: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  InputDecoration _inputDeco(String hint) {
-    return InputDecoration(
-      hintText: hint,
-      filled: true,
-      fillColor: AppColors.gray50,
-      border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: AppColors.gray300)),
-      enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: AppColors.gray300)),
-      focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: AppColors.teal600, width: 2)),
-      contentPadding:
-      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-    );
-  }
-}
-
-// ── Sub-widgets ───────────────────────────────────────────────────────────────
-
-class _ScreenHeader extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(24, 18, 24, 16),
-      decoration: const BoxDecoration(
-        color: AppColors.slate50,
-        border: Border(bottom: BorderSide(color: AppColors.gray200)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.add_box_outlined,
-              color: AppColors.teal600, size: 22),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+          child: Row(children: [
+            Icon(Icons.add_box_outlined, color: AppColors.teal600, size: 22),
+            const SizedBox(width: 10),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('Add New Product', style: AppTextStyles.h2),
               const SizedBox(height: 1),
-              Text('Enter details to add a new product to inventory',
-                  style: AppTextStyles.caption),
-            ],
+              Text('Fill details to add a product to inventory', style: AppTextStyles.caption),
+            ]),
+          ]),
+        ),
+
+        // Form
+        Expanded(child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(28),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+              _Section('Basic Information', c),
+              const SizedBox(height: 14),
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(flex: 2, child: _FV('Product Name *', TextFormField(
+                  controller: _nameCtrl,
+                  validator: (v) => (v?.isEmpty ?? true) ? 'Required' : null,
+                  decoration: _deco('e.g. Kanjeevaram Silk Saree', c),
+                ))),
+                const SizedBox(width: 16),
+                Expanded(child: _FV('Brand', _DD(_brand,
+                    ['In-House','Nalli','Pothys','RMKV'],
+                        (v) => setState(() => _brand = v ?? _brand), c))),
+                const SizedBox(width: 16),
+                Expanded(child: _FV('Category *', _DD(
+                    _category.isEmpty ? null : _category,
+                    ['Silk Sarees','Cotton Sarees','Designer Wear','Accessories'],
+                        (v) => setState(() => _category = v ?? ''), c,
+                    hint: 'Select…'))),
+              ]),
+              const SizedBox(height: 16),
+              _FV('Description (optional)', TextFormField(
+                controller: _descCtrl, maxLines: 3,
+                decoration: _deco('Short product description…', c),
+              )),
+
+              const SizedBox(height: 28),
+              _Section('Pricing & Tax', c),
+              const SizedBox(height: 14),
+              Row(children: [
+                Expanded(child: _FV('Purchase Price (₹) *', TextFormField(
+                  controller: _purchaseCtrl,
+                  keyboardType: TextInputType.number,
+                  validator: (v) => (v?.isEmpty ?? true) ? 'Required' : null,
+                  decoration: _deco('0.00', c),
+                ))),
+                const SizedBox(width: 16),
+                Expanded(child: _FV('Selling Price (₹) *', TextFormField(
+                  controller: _sellingCtrl,
+                  keyboardType: TextInputType.number,
+                  validator: (v) => (v?.isEmpty ?? true) ? 'Required' : null,
+                  decoration: _deco('0.00', c),
+                ))),
+                const SizedBox(width: 16),
+                Expanded(child: _FV('Tax Rate (GST %)', _DD(_taxType,
+                    ['0','5','12','18','28'],
+                        (v) => setState(() => _taxType = v ?? _taxType), c))),
+              ]),
+
+              const SizedBox(height: 28),
+              _Section('Inventory & Barcode', c),
+              const SizedBox(height: 14),
+              Row(children: [
+                Expanded(child: _FV('Opening Stock', TextFormField(
+                  controller: _stockCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: _deco('0', c),
+                ))),
+                const SizedBox(width: 16),
+                Expanded(child: _FV('Alert Quantity', TextFormField(
+                  controller: _alertQtyCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: _deco('5', c),
+                ))),
+                const SizedBox(width: 16),
+                Expanded(child: _FV('Barcode Type', _DD(_barcodeType,
+                    ['CODE128','EAN-13','UPC-A'],
+                        (v) => setState(() => _barcodeType = v ?? _barcodeType), c))),
+              ]),
+              const SizedBox(height: 16),
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(child: _FV('SKU / Barcode',
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Expanded(child: TextFormField(
+                      controller: _skuCtrl,
+                      enabled: !_autoSku,
+                      decoration: _deco(_autoSku ? 'Auto-generated' : 'Enter barcode', c),
+                    )),
+                    const SizedBox(width: 12),
+                    Row(children: [
+                      Checkbox(value: _autoSku,
+                          onChanged: (v) => setState(() => _autoSku = v ?? true),
+                          activeColor: AppColors.teal600),
+                      Text('Auto Generate',
+                          style: TextStyle(fontSize: 13, color: c.textSecond)),
+                    ]),
+                  ]),
+                )),
+              ]),
+
+              const SizedBox(height: 40),
+            ]),
           ),
-        ],
-      ),
-    );
-  }
-}
+        )),
 
-class _Section extends StatelessWidget {
-  final String title;
-  final Widget child;
-  const _Section({required this.title, required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+        // Footer
         Container(
-          padding: const EdgeInsets.only(bottom: 8),
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: AppColors.gray100)),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          decoration: BoxDecoration(
+            color: c.tableHeader,
+            border: Border(top: BorderSide(color: c.border)),
           ),
-          child: Text(
-            title.toUpperCase(),
-            style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: AppColors.gray800,
-                letterSpacing: 0.8),
-          ),
+          child: Row(children: [
+            const Spacer(),
+            OutlinedButton(
+              onPressed: _resetForm,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: c.textSecond,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                side: BorderSide(color: c.border),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+              child: const Text('Reset'),
+            ),
+            const SizedBox(width: 10),
+            ElevatedButton.icon(
+              onPressed: _saving ? null : _onSave,
+              icon: _saving
+                  ? const SizedBox(width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.white))
+                  : const Icon(Icons.save_outlined, size: 18),
+              label: Text(_saving ? 'Saving…' : 'Save Product'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.teal600,
+                foregroundColor: AppColors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                elevation: 0,
+                textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ]),
         ),
-        const SizedBox(height: 14),
-        child,
-      ],
+      ]),
     );
   }
-}
 
-class _Field extends StatelessWidget {
-  final String label;
-  final Widget child;
-  final Widget? labelSuffix;
-
-  const _Field(
-      {required this.label, required this.child, this.labelSuffix});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
+  // ── Helpers ───────────────────────────────────────────────
+  Widget _Section(String title, AdaptiveColors c) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text(label,
-                style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.gray700)),
-            if (labelSuffix != null) ...[
-              const Spacer(),
-              labelSuffix!,
-            ],
-          ],
-        ),
+        Text(title.toUpperCase(), style: TextStyle(fontSize: 11,
+            fontWeight: FontWeight.w700, color: c.textPrimary, letterSpacing: 0.8)),
+        const SizedBox(height: 4),
+        Divider(height: 1, color: c.borderLight),
+      ]);
+
+  Widget _FV(String label, Widget child) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+            color: context.colors.textSecond)),
         const SizedBox(height: 6),
         child,
-      ],
-    );
-  }
-}
+      ]);
 
-class _DropdownField extends StatelessWidget {
-  final String? value;
-  final String? hint;
-  final List<String> items;
-  final ValueChanged<String?> onChanged;
+  InputDecoration _deco(String hint, AdaptiveColors c) => InputDecoration(
+    hintText: hint,
+    filled: true, fillColor: c.inputFill,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: c.border)),
+    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: c.border)),
+    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppColors.teal600, width: 2)),
+    hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
+  );
 
-  const _DropdownField(
-      {this.value, this.hint, required this.items, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.gray50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.gray300),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: value,
-          hint: hint != null
-              ? Text(hint!,
-              style: const TextStyle(
-                  fontSize: 14, color: AppColors.gray400))
-              : null,
-          isExpanded: true,
-          items: items
-              .map((e) => DropdownMenuItem(
-              value: e,
-              child: Text(e, style: const TextStyle(fontSize: 14))))
-              .toList(),
-          onChanged: onChanged,
-          style: AppTextStyles.body,
-          icon: const Icon(Icons.keyboard_arrow_down,
-              size: 18, color: AppColors.gray500),
-        ),
-      ),
-    );
-  }
+  Widget _DD(String? value, List<String> items,
+      ValueChanged<String?> onChanged, AdaptiveColors c, {String? hint}) =>
+      Container(
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: c.inputFill,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: c.border),
+          ),
+          child: DropdownButtonHideUnderline(child: DropdownButton<String>(
+            value: value,
+            hint: hint != null ? Text(hint, style: TextStyle(fontSize: 14, color: c.textMuted)) : null,
+            isExpanded: true, dropdownColor: c.cardBg,
+            items: items.map((e) => DropdownMenuItem(value: e,
+                child: Text(e, style: TextStyle(fontSize: 14, color: c.textPrimary)))).toList(),
+            onChanged: onChanged,
+            icon: Icon(Icons.keyboard_arrow_down, size: 18, color: c.textMuted),
+            style: TextStyle(fontSize: 14, color: c.textPrimary),
+          )));
 }

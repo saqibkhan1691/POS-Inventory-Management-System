@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/theme.dart';
+import '../core/app_colors_ext.dart';
 
 /// ─────────────────────────────────────────────────────────────
 ///  LOGIN SCREEN  –  Full-screen auth page (slate-900 bg)
@@ -63,14 +64,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     )
                   ],
                 ),
-                child: const Icon(Icons.storefront_outlined,
-                    color: AppColors.white, size: 30),
+                child: Icon(Icons.storefront_outlined,
+                    color: context.colors.cardBg, size: 30),
               ),
               const SizedBox(height: 20),
-              const Text(
+              Text(
                 'SHREE SAREES',
                 style: TextStyle(
-                  color: AppColors.white,
+                  color: context.colors.cardBg,
                   fontSize: 26,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 1.0,
@@ -92,7 +93,7 @@ class _LoginScreenState extends State<LoginScreen> {
               // ── Card ────────────────────────────────────
               Container(
                 decoration: BoxDecoration(
-                  color: AppColors.white,
+                  color: context.colors.cardBg,
                   borderRadius: BorderRadius.circular(14),
                   boxShadow: [
                     BoxShadow(
@@ -159,7 +160,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ? Icons.visibility_off_outlined
                                       : Icons.visibility_outlined,
                                   size: 18,
-                                  color: AppColors.gray400,
+                                  color: context.colors.textMuted,
                                 ),
                                 onPressed: () =>
                                     setState(() => _obscure = !_obscure),
@@ -242,14 +243,14 @@ class _LoginScreenState extends State<LoginScreen> {
     return InputDecoration(
       hintText: hint,
       filled: true,
-      fillColor: AppColors.gray50,
+      fillColor: context.colors.inputFill,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: AppColors.gray300),
+        borderSide: BorderSide(color: context.colors.border),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: AppColors.gray300),
+        borderSide: BorderSide(color: context.colors.border),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),

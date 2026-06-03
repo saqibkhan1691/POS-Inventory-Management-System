@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../core/theme.dart';
 import '../widgets/payment_form.dart';
+import '../core/app_colors_ext.dart';
 
 /// ─────────────────────────────────────────────────────────────
 ///  PAYMENT SCREEN  –  Full-page payment UI (when accessed from
@@ -26,7 +27,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.gray50,
+      backgroundColor: Theme.of(context).colorScheme.background,
       body: Center(
         child: SizedBox(
           width: 520,

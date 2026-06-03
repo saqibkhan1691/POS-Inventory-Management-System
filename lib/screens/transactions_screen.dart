@@ -1,302 +1,251 @@
 import 'package:flutter/material.dart';
 import '../core/theme.dart';
+import '../core/app_colors_ext.dart';
+import '../repositories/sales_repository.dart';
+import '../models/sale_model.dart';
 
 /// ─────────────────────────────────────────────────────────────
-///  TRANSACTIONS SCREEN  –  lib/screens/billing_screen.dart
-///  Transaction History table with filters, status badges,
-///  payment method chips, Export CSV button, pagination
+///  TRANSACTIONS SCREEN  –  lib/screens/transactions_screen.dart
+///  Now reads from SQLite via SalesRepository
 /// ─────────────────────────────────────────────────────────────
-
-// ── Data model (UI-only, no DB yet) ──────────────────────────
-enum TxStatus { completed, refunded, pending }
-enum TxPayment { cash, upi, card }
-
-class TransactionItem {
-  final String invoiceId;
-  final String dateTime;
-  final String customer;
-  final int items;
-  final TxPayment payment;
-  final double amount;
-  final TxStatus status;
-
-  const TransactionItem({
-    required this.invoiceId,
-    required this.dateTime,
-    required this.customer,
-    required this.items,
-    required this.payment,
-    required this.amount,
-    required this.status,
-  });
-}
-
-const _dummyTransactions = [
-  TransactionItem(invoiceId: 'INV-2026-001', dateTime: '2026-05-04\n10:15 AM', customer: 'Walk-in Customer', items: 3,  payment: TxPayment.upi,  amount: 12500, status: TxStatus.completed),
-  TransactionItem(invoiceId: 'INV-2026-002', dateTime: '2026-05-04\n11:30 AM', customer: 'Anjali S.',         items: 1,  payment: TxPayment.card, amount: 4500,  status: TxStatus.completed),
-  TransactionItem(invoiceId: 'INV-2026-003', dateTime: '2026-05-04\n01:45 PM', customer: 'Walk-in Customer', items: 5,  payment: TxPayment.cash, amount: 2400,  status: TxStatus.completed),
-  TransactionItem(invoiceId: 'INV-2026-004', dateTime: '2026-05-04\n02:20 PM', customer: 'Meera K.',          items: 2,  payment: TxPayment.card, amount: 6800,  status: TxStatus.refunded),
-  TransactionItem(invoiceId: 'INV-2026-005', dateTime: '2026-05-03\n09:10 AM', customer: 'Neha R.',           items: 4,  payment: TxPayment.upi,  amount: 18500, status: TxStatus.completed),
-  TransactionItem(invoiceId: 'INV-2026-006', dateTime: '2026-05-03\n04:55 PM', customer: 'Walk-in Customer', items: 1,  payment: TxPayment.cash, amount: 850,   status: TxStatus.completed),
-];
-
 class TransactionsScreen extends StatefulWidget {
   const TransactionsScreen({super.key});
-
   @override
   State<TransactionsScreen> createState() => _TransactionsScreenState();
 }
 
 class _TransactionsScreenState extends State<TransactionsScreen> {
-  String _search  = '';
-  String _period  = 'Today';
-  String _method  = 'All Payment Methods';
-  int    _page    = 1;
-  static const _perPage = 6;
+  final _repo = SalesRepository();
 
-  List<TransactionItem> get _filtered {
-    return _dummyTransactions.where((t) {
-      final q = _search.toLowerCase();
+  List<SaleModel> _allSales  = [];
+  List<SaleModel> _filtered  = [];
+  bool            _loading   = true;
+
+  String _search = '';
+  String _period = 'Today';
+  String _method = 'All Payment Methods';
+  int    _page   = 1;
+  static const _perPage = 10;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    setState(() => _loading = true);
+    List<SaleModel> sales;
+    switch (_period) {
+      case 'Today':
+        sales = await _repo.getTodaySales();
+        break;
+      case 'Last 7 Days':
+        sales = await _repo.getByDateRange(
+            DateTime.now().subtract(const Duration(days: 7)), DateTime.now());
+        break;
+      case 'Last 30 Days':
+        sales = await _repo.getByDateRange(
+            DateTime.now().subtract(const Duration(days: 30)), DateTime.now());
+        break;
+      default:
+        sales = await _repo.getAllSales(limit: 100);
+    }
+    setState(() {
+      _allSales = sales;
+      _applyFilters();
+      _loading  = false;
+    });
+  }
+
+  void _applyFilters() {
+    _filtered = _allSales.where((t) {
+      final q           = _search.toLowerCase();
       final matchSearch = _search.isEmpty ||
           t.invoiceId.toLowerCase().contains(q) ||
           t.customer.toLowerCase().contains(q);
       final matchMethod = _method == 'All Payment Methods' ||
-          (_method == 'Cash' && t.payment == TxPayment.cash) ||
-          (_method == 'UPI'  && t.payment == TxPayment.upi)  ||
-          (_method == 'Card' && t.payment == TxPayment.card);
+          (_method == 'Cash' && t.paymentMethod == PaymentMethod.cash) ||
+          (_method == 'UPI'  && t.paymentMethod == PaymentMethod.upi)  ||
+          (_method == 'Card' && t.paymentMethod == PaymentMethod.card);
       return matchSearch && matchMethod;
     }).toList();
   }
 
-  List<TransactionItem> get _paged {
-    final all  = _filtered;
+  List<SaleModel> get _paged {
     final start = (_page - 1) * _perPage;
-    final end   = (start + _perPage).clamp(0, all.length);
-    return start >= all.length ? [] : all.sublist(start, end);
+    final end   = (start + _perPage).clamp(0, _filtered.length);
+    return start >= _filtered.length ? [] : _filtered.sublist(start, end);
   }
 
-  int get _totalPages => ((_filtered.length) / _perPage).ceil().clamp(1, 9999);
+  int get _totalPages => (_filtered.length / _perPage).ceil().clamp(1, 9999);
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.white,
+        color: c.cardBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.gray200),
+        border: Border.all(color: c.border),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6)],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildHeader(),
-          _buildFiltersRow(),
-          _buildTableHeader(),
-          Expanded(child: _buildRows()),
-          _buildFooter(),
-        ],
-      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _buildHeader(c),
+        _buildFiltersRow(c),
+        _buildTableHeader(c),
+        Expanded(child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _filtered.isEmpty
+            ? Center(child: Text('No transactions found.',
+            style: TextStyle(color: c.textMuted, fontSize: 14)))
+            : ListView.separated(
+          itemCount: _paged.length,
+          separatorBuilder: (_, __) => Divider(height: 1, color: c.borderLight),
+          itemBuilder: (ctx, i) => _TransactionRow(
+            tx:       _paged[i],
+            onRefund: () => _onRefund(_paged[i]),
+          ),
+        )),
+        _buildFooter(c),
+      ]),
     );
   }
 
-  // ── Header ───────────────────────────────────────────────
-  Widget _buildHeader() {
+  Widget _buildHeader(AdaptiveColors c) {
     return Container(
       padding: const EdgeInsets.fromLTRB(24, 20, 20, 16),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.gray100)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: AppColors.teal50,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.receipt_long_outlined,
-                color: AppColors.teal600, size: 20),
+      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: c.borderLight))),
+      child: Row(children: [
+        Container(width: 40, height: 40,
+            decoration: BoxDecoration(color: AppColors.teal50, borderRadius: BorderRadius.circular(8)),
+            child: const Icon(Icons.receipt_long_outlined, color: AppColors.teal600, size: 20)),
+        const SizedBox(width: 12),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Transaction History', style: AppTextStyles.h2),
+          const SizedBox(height: 2),
+          Text('View and manage past bills and refunds', style: AppTextStyles.caption),
+        ]),
+        const Spacer(),
+        OutlinedButton.icon(
+          onPressed: () {},
+          icon: const Icon(Icons.download_outlined, size: 16),
+          label: const Text('Export CSV'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: c.textSecond,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            side: BorderSide(color: c.border),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Transaction History', style: AppTextStyles.h2),
-              const SizedBox(height: 2),
-              Text('View and manage past bills and refunds',
-                  style: AppTextStyles.caption),
-            ],
-          ),
-          const Spacer(),
-          // Export CSV button
-          OutlinedButton.icon(
-            onPressed: () {},
-            icon: const Icon(Icons.download_outlined, size: 16),
-            label: const Text('Export CSV'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.gray700,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              side: const BorderSide(color: AppColors.gray300),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ]),
     );
   }
 
-  // ── Filters row ──────────────────────────────────────────
-  Widget _buildFiltersRow() {
+  Widget _buildFiltersRow(AdaptiveColors c) {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.gray100)),
-      ),
-      child: Row(
-        children: [
-          // Search
-          SizedBox(
-            width: 320,
-            height: 38,
+      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: c.borderLight))),
+      child: Row(children: [
+        SizedBox(width: 300, height: 38,
             child: TextField(
-              onChanged: (v) => setState(() { _search = v; _page = 1; }),
+              onChanged: (v) => setState(() { _search = v; _page = 1; _applyFilters(); }),
               decoration: InputDecoration(
-                hintText: 'Search by Invoice ID or Customer Name…',
-                prefixIcon: const Icon(Icons.search, size: 16, color: AppColors.gray400),
-                filled: true,
-                fillColor: AppColors.gray50,
+                hintText: 'Search by Invoice or Customer…',
+                prefixIcon: Icon(Icons.search, size: 16, color: c.textMuted),
+                filled: true, fillColor: c.inputFill,
                 contentPadding: EdgeInsets.zero,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: AppColors.gray300),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: AppColors.gray300),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: AppColors.teal600, width: 1.5),
-                ),
-                hintStyle: const TextStyle(fontSize: 13, color: AppColors.gray400),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c.border)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c.border)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: AppColors.teal600, width: 1.5)),
+                hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
               ),
-              style: const TextStyle(fontSize: 13),
-            ),
-          ),
-          const SizedBox(width: 10),
-
-          // Period dropdown
-          _FilterDropdown(
-            value: _period,
-            items: const ['Today', 'Yesterday', 'Last 7 Days', 'Last 30 Days', 'Custom'],
-            onChanged: (v) => setState(() => _period = v ?? _period),
-          ),
-          const SizedBox(width: 10),
-
-          // Payment method dropdown
-          _FilterDropdown(
-            value: _method,
-            items: const ['All Payment Methods', 'Cash', 'UPI', 'Card'],
-            onChanged: (v) => setState(() => _method = v ?? _method),
-            width: 190,
-          ),
-          const SizedBox(width: 10),
-
-          // More Filters button
-          OutlinedButton.icon(
-            onPressed: () {},
-            icon: const Icon(Icons.tune, size: 16),
-            label: const Text('More Filters'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.gray600,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-              side: const BorderSide(color: AppColors.gray300),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-            ),
-          ),
-        ],
-      ),
+            )),
+        const SizedBox(width: 10),
+        _DDFilter(_period,
+            ['Today','Yesterday','Last 7 Days','Last 30 Days','All Time'],
+                (v) { setState(() { _period = v ?? _period; _page = 1; }); _loadData(); }, c),
+        const SizedBox(width: 10),
+        _DDFilter(_method,
+            ['All Payment Methods','Cash','UPI','Card'],
+                (v) => setState(() { _method = v ?? _method; _page = 1; _applyFilters(); }), c,
+            width: 190),
+      ]),
     );
   }
 
-  // ── Table header ─────────────────────────────────────────
-  Widget _buildTableHeader() {
+  Widget _buildTableHeader(AdaptiveColors c) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppColors.gray50,
-        border: Border(bottom: BorderSide(color: AppColors.gray200)),
+      decoration: BoxDecoration(
+        color: c.tableHeader,
+        border: Border(bottom: BorderSide(color: c.border)),
       ),
-      child: const Row(
-        children: [
-          _TH('DATE & TIME',      flex: 3),
-          _TH('INVOICE ID',       flex: 3),
-          _TH('CUSTOMER',         flex: 4),
-          _TH('ITEMS',            flex: 2, align: TextAlign.center),
-          _TH('PAYMENT METHOD',   flex: 3, align: TextAlign.center),
-          _TH('AMOUNT',           flex: 3, align: TextAlign.right),
-          _TH('STATUS',           flex: 2, align: TextAlign.center),
-          _TH('ACTIONS',          flex: 2, align: TextAlign.center),
-        ],
-      ),
+      child: Row(children: [
+        _TH('DATE & TIME',    3, c),
+        _TH('INVOICE ID',     3, c),
+        _TH('CUSTOMER',       4, c),
+        _TH('ITEMS',          2, c, center: true),
+        _TH('METHOD',         3, c, center: true),
+        _TH('AMOUNT',         3, c, right: true),
+        _TH('STATUS',         2, c, center: true),
+        _TH('ACTIONS',        2, c, center: true),
+      ]),
     );
   }
 
-  // ── Table rows ───────────────────────────────────────────
-  Widget _buildRows() {
-    final rows = _paged;
-    if (rows.isEmpty) {
-      return const Center(
-        child: Text('No transactions found.',
-            style: TextStyle(color: AppColors.gray400, fontSize: 14)),
-      );
-    }
-    return ListView.separated(
-      itemCount: rows.length,
-      separatorBuilder: (_, __) =>
-      const Divider(height: 1, color: AppColors.gray100),
-      itemBuilder: (ctx, i) => _TransactionRow(tx: rows[i]),
-    );
-  }
-
-  // ── Footer / pagination ──────────────────────────────────
-  Widget _buildFooter() {
+  Widget _buildFooter(AdaptiveColors c) {
     final total = _filtered.length;
     final start = (_page - 1) * _perPage + 1;
-    final end   = (start + _perPage - 1).clamp(1, total);
+    final end   = (start + _perPage - 1).clamp(1, total.clamp(1, 9999));
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.gray200)),
-      ),
-      child: Row(
-        children: [
-          Text(
-            'Showing $start to $end of $total transactions today',
-            style: AppTextStyles.caption,
-          ),
-          const Spacer(),
-          _PaginationBar(
-            current: _page,
-            total: _totalPages,
-            onChanged: (p) => setState(() => _page = p),
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: c.border))),
+      child: Row(children: [
+        Text(total == 0
+            ? 'No transactions'
+            : 'Showing $start–$end of $total transactions',
+            style: AppTextStyles.caption),
+        const Spacer(),
+        _PaginationBar(current: _page, total: _totalPages,
+            onChanged: (p) => setState(() => _page = p)),
+      ]),
+    );
+  }
+
+  Future<void> _onRefund(SaleModel sale) async {
+    if (sale.id == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Refund'),
+        content: Text('Refund invoice ${sale.invoiceId}?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Refund', style: TextStyle(color: AppColors.red500)),
           ),
         ],
       ),
     );
+    if (confirm == true) {
+      await _repo.refundSale(sale.id!);
+      _loadData();
+    }
   }
 }
 
-// ── Transaction row ───────────────────────────────────────────────────────────
+// ── Row widget ────────────────────────────────────────────────
 class _TransactionRow extends StatefulWidget {
-  final TransactionItem tx;
-  const _TransactionRow({required this.tx});
-
-  @override
-  State<_TransactionRow> createState() => _TransactionRowState();
+  final SaleModel tx;
+  final VoidCallback onRefund;
+  const _TransactionRow({required this.tx, required this.onRefund});
+  @override State<_TransactionRow> createState() => _TransactionRowState();
 }
 
 class _TransactionRowState extends State<_TransactionRow> {
@@ -304,378 +253,179 @@ class _TransactionRowState extends State<_TransactionRow> {
 
   @override
   Widget build(BuildContext context) {
+    final c  = context.colors;
     final tx = widget.tx;
+    final dt = tx.createdAt;
+    final dateStr = '${dt.year}-${dt.month.toString().padLeft(2,'0')}-${dt.day.toString().padLeft(2,'0')}';
+    final h   = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
+    final amPm= dt.hour >= 12 ? 'PM' : 'AM';
+    final timeStr = '$h:${dt.minute.toString().padLeft(2,'0')} $amPm';
+
     return MouseRegion(
       onEnter: (_) => setState(() => _hov = true),
       onExit:  (_) => setState(() => _hov = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
-        color: _hov ? AppColors.slate50 : AppColors.white,
+        color: _hov ? c.rowHover : c.cardBg,
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-        child: Row(
-          children: [
-            // Date & Time
-            Expanded(
-              flex: 3,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: tx.dateTime.split('\n').map((l) {
-                  final isTime = l.contains('AM') || l.contains('PM');
-                  return Text(l,
-                      style: isTime
-                          ? AppTextStyles.caption
-                          : AppTextStyles.bodyBold.copyWith(fontSize: 13));
-                }).toList(),
-              ),
-            ),
-
-            // Invoice ID — teal link style
-            Expanded(
-              flex: 3,
-              child: Text(
-                tx.invoiceId,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.teal600,
-                  decoration: TextDecoration.underline,
-                  decorationColor: AppColors.teal600,
-                ),
-              ),
-            ),
-
-            // Customer
-            Expanded(
-              flex: 4,
-              child: Text(tx.customer,
-                  style: AppTextStyles.body.copyWith(color: AppColors.gray700)),
-            ),
-
-            // Items
-            Expanded(
-              flex: 2,
-              child: Center(
-                child: Text('${tx.items}',
-                    style: AppTextStyles.bodyBold),
-              ),
-            ),
-
-            // Payment method chip
-            Expanded(
-              flex: 3,
-              child: Center(child: _PaymentChip(tx.payment)),
-            ),
-
-            // Amount
-            Expanded(
-              flex: 3,
-              child: Text(
-                '₹${tx.amount.toStringAsFixed(2)}',
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.gray900),
-              ),
-            ),
-
-            // Status badge
-            Expanded(
-              flex: 2,
-              child: Center(child: _StatusBadge(tx.status)),
-            ),
-
-            // Actions
-            Expanded(
-              flex: 2,
-              child: AnimatedOpacity(
-                opacity: _hov ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 150),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _IconAction(
-                      icon: Icons.visibility_outlined,
-                      tooltip: 'View Details',
-                      onTap: () {},
-                    ),
-                    const SizedBox(width: 4),
-                    _IconAction(
-                      icon: Icons.print_outlined,
-                      tooltip: 'Print Bill',
-                      onTap: () {},
-                    ),
-                    if (tx.status != TxStatus.refunded) ...[
-                      const SizedBox(width: 4),
-                      _IconAction(
-                        icon: Icons.undo_outlined,
-                        tooltip: 'Refund',
-                        color: AppColors.red500,
-                        onTap: () {},
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+        child: Row(children: [
+          // Date & time
+          Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(dateStr, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c.textPrimary)),
+            Text(timeStr, style: TextStyle(fontSize: 12, color: c.textMuted)),
+          ])),
+          // Invoice
+          Expanded(flex: 3, child: Text(tx.invoiceId,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                  color: AppColors.teal600, decoration: TextDecoration.underline,
+                  decorationColor: AppColors.teal600))),
+          // Customer
+          Expanded(flex: 4, child: Text(tx.customer,
+              style: TextStyle(fontSize: 14, color: c.textSecond))),
+          // Items — fetched separately if needed, show — for now
+          Expanded(flex: 2, child: Center(child: Text('—',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: c.textPrimary)))),
+          // Payment chip
+          Expanded(flex: 3, child: Center(child: _PayChip(tx.paymentMethod))),
+          // Amount
+          Expanded(flex: 3, child: Text('₹${tx.total.toStringAsFixed(2)}',
+              textAlign: TextAlign.right,
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: c.textPrimary))),
+          // Status badge
+          Expanded(flex: 2, child: Center(child: _StatusBadge(tx.status))),
+          // Actions
+          Expanded(flex: 2, child: AnimatedOpacity(
+            opacity: _hov ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 150),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              _IBtn(Icons.visibility_outlined, 'View', c.textSub, () {}),
+              const SizedBox(width: 4),
+              _IBtn(Icons.print_outlined, 'Print', c.textSub, () {}),
+              if (tx.status != SaleStatus.refunded) ...[
+                const SizedBox(width: 4),
+                _IBtn(Icons.undo_outlined, 'Refund', AppColors.red500, widget.onRefund),
+              ],
+            ]),
+          )),
+        ]),
       ),
     );
   }
 }
 
-// ── Payment chip ──────────────────────────────────────────────────────────────
-class _PaymentChip extends StatelessWidget {
-  final TxPayment method;
-  const _PaymentChip(this.method);
-
+class _PayChip extends StatelessWidget {
+  final PaymentMethod m;
+  const _PayChip(this.m);
   @override
   Widget build(BuildContext context) {
-    final configs = {
-      TxPayment.upi:  (label: 'UPI',  bg: const Color(0xFFEDE9FE), fg: const Color(0xFF6D28D9)),
-      TxPayment.card: (label: 'Card', bg: const Color(0xFFE0F2FE), fg: const Color(0xFF0369A1)),
-      TxPayment.cash: (label: 'Cash', bg: const Color(0xFFFEF9C3), fg: const Color(0xFF92400E)),
-    };
-    final cfg = configs[method]!;
+    final cfg = {
+      PaymentMethod.upi:  (l:'UPI',  bg:const Color(0xFFEDE9FE), fg:const Color(0xFF6D28D9)),
+      PaymentMethod.card: (l:'Card', bg:const Color(0xFFE0F2FE), fg:const Color(0xFF0369A1)),
+      PaymentMethod.cash: (l:'Cash', bg:const Color(0xFFFEF9C3), fg:const Color(0xFF92400E)),
+    }[m]!;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: cfg.bg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(cfg.label,
-          style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: cfg.fg)),
+      decoration: BoxDecoration(color: cfg.bg, borderRadius: BorderRadius.circular(20)),
+      child: Text(cfg.l, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cfg.fg)),
     );
   }
 }
 
-// ── Status badge ──────────────────────────────────────────────────────────────
 class _StatusBadge extends StatelessWidget {
-  final TxStatus status;
-  const _StatusBadge(this.status);
-
+  final SaleStatus s;
+  const _StatusBadge(this.s);
   @override
   Widget build(BuildContext context) {
-    final configs = {
-      TxStatus.completed: (label: 'Completed', bg: AppColors.green100,              fg: AppColors.green700),
-      TxStatus.refunded:  (label: 'Refunded',  bg: AppColors.red100,               fg: AppColors.red700),
-      TxStatus.pending:   (label: 'Pending',   bg: const Color(0xFFFEF9C3),        fg: const Color(0xFF92400E)),
-    };
-    final cfg = configs[status]!;
+    final cfg = {
+      SaleStatus.completed: (l:'Completed', bg:AppColors.green100, fg:AppColors.green700),
+      SaleStatus.refunded:  (l:'Refunded',  bg:AppColors.red100,   fg:AppColors.red700),
+      SaleStatus.pending:   (l:'Pending',   bg:const Color(0xFFFEF9C3), fg:const Color(0xFF92400E)),
+    }[s]!;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: cfg.bg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(cfg.label,
-          style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: cfg.fg)),
+      decoration: BoxDecoration(color: cfg.bg, borderRadius: BorderRadius.circular(20)),
+      child: Text(cfg.l, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: cfg.fg)),
     );
   }
 }
 
-// ── Sub-widgets ───────────────────────────────────────────────────────────────
-class _TH extends StatelessWidget {
-  final String text;
-  final int flex;
-  final TextAlign align;
-  const _TH(this.text, {this.flex = 1, this.align = TextAlign.left});
+// ── Shared helpers ────────────────────────────────────────────
+Widget _TH(String text, int flex, AdaptiveColors c, {bool center=false, bool right=false}) =>
+    Expanded(flex: flex, child: Text(text,
+        textAlign: right ? TextAlign.right : center ? TextAlign.center : TextAlign.left,
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+            color: c.textSub, letterSpacing: 0.5)));
 
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      flex: flex,
-      child: Text(text,
-          textAlign: align,
-          style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: AppColors.gray500,
-              letterSpacing: 0.5)),
-    );
-  }
+Widget _DDFilter(String val, List<String> items, ValueChanged<String?> onChange,
+    AdaptiveColors c, {double width = 150}) =>
+    Container(width: width, height: 38,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(color: c.cardBg,
+            borderRadius: BorderRadius.circular(8), border: Border.all(color: c.border)),
+        child: DropdownButtonHideUnderline(child: DropdownButton<String>(
+          value: items.contains(val) ? val : items.first,
+          isExpanded: true, dropdownColor: c.cardBg,
+          items: items.map((e) => DropdownMenuItem(value: e,
+              child: Text(e, style: TextStyle(fontSize: 13, color: c.textSecond),
+                  overflow: TextOverflow.ellipsis))).toList(),
+          onChanged: onChange,
+          icon: Icon(Icons.keyboard_arrow_down, size: 16, color: c.textSub),
+        )));
+
+class _IBtn extends StatefulWidget {
+  final IconData icon; final String tooltip; final Color color; final VoidCallback onTap;
+  const _IBtn(this.icon, this.tooltip, this.color, this.onTap);
+  @override State<_IBtn> createState() => _IBtnState();
 }
-
-class _FilterDropdown extends StatelessWidget {
-  final String value;
-  final List<String> items;
-  final ValueChanged<String?> onChanged;
-  final double width;
-  const _FilterDropdown(
-      {required this.value, required this.items, required this.onChanged, this.width = 150});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: width,
-      height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.gray300),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: value,
-          isExpanded: true,
-          items: items
-              .map((e) => DropdownMenuItem(
-              value: e,
-              child: Text(e,
-                  style: const TextStyle(fontSize: 13, color: AppColors.gray700),
-                  overflow: TextOverflow.ellipsis)))
-              .toList(),
-          onChanged: onChanged,
-          style: AppTextStyles.body,
-          icon: const Icon(Icons.keyboard_arrow_down,
-              size: 16, color: AppColors.gray500),
-        ),
-      ),
-    );
-  }
-}
-
-class _IconAction extends StatefulWidget {
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-  final Color color;
-  const _IconAction({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-    this.color = AppColors.gray500,
-  });
-
-  @override
-  State<_IconAction> createState() => _IconActionState();
-}
-
-class _IconActionState extends State<_IconAction> {
+class _IBtnState extends State<_IBtn> {
   bool _hov = false;
-
   @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
+  Widget build(BuildContext context) => MouseRegion(
       onEnter: (_) => setState(() => _hov = true),
       onExit:  (_) => setState(() => _hov = false),
       cursor: SystemMouseCursors.click,
-      child: Tooltip(
-        message: widget.tooltip,
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: _hov ? widget.color.withOpacity(0.1) : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Icon(widget.icon, size: 16,
-                color: _hov ? widget.color : AppColors.gray400),
-          ),
-        ),
-      ),
-    );
-  }
+      child: Tooltip(message: widget.tooltip,
+          child: GestureDetector(onTap: widget.onTap,
+              child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                      color: _hov ? widget.color.withOpacity(0.1) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6)),
+                  child: Icon(widget.icon, size: 16,
+                      color: _hov ? widget.color : context.colors.textMuted)))));
 }
 
 class _PaginationBar extends StatelessWidget {
-  final int current;
-  final int total;
+  final int current, total;
   final ValueChanged<int> onChanged;
-  const _PaginationBar(
-      {required this.current, required this.total, required this.onChanged});
-
+  const _PaginationBar({required this.current, required this.total, required this.onChanged});
   @override
   Widget build(BuildContext context) {
-    final pages = List.generate(total.clamp(1, 5), (i) => i + 1);
-    return Row(
-      children: [
-        _PgBtn(
-          icon: Icons.chevron_left,
-          onTap: current > 1 ? () => onChanged(current - 1) : null,
-        ),
-        ...pages.map((p) => _PgNum(
-          number: p,
-          active: current == p,
-          onTap: () => onChanged(p),
-        )),
-        _PgBtn(
-          icon: Icons.chevron_right,
-          onTap: current < total ? () => onChanged(current + 1) : null,
-        ),
-      ],
-    );
+    final c = context.colors;
+    return Row(children: [
+      _PgBtn(Icons.chevron_left, current > 1 ? () => onChanged(current-1) : null, c),
+      ...List.generate(total.clamp(1,5), (i) => _PgNum(i+1, current==i+1, () => onChanged(i+1), c)),
+      _PgBtn(Icons.chevron_right, current < total ? () => onChanged(current+1) : null, c),
+    ]);
   }
 }
 
-class _PgBtn extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback? onTap;
-  const _PgBtn({required this.icon, this.onTap});
+Widget _PgBtn(IconData icon, VoidCallback? onTap, AdaptiveColors c) =>
+    Padding(padding: const EdgeInsets.only(right: 4),
+        child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(6),
+            child: Container(width: 32, height: 32,
+                decoration: BoxDecoration(border: Border.all(color: c.border), borderRadius: BorderRadius.circular(6)),
+                child: Icon(icon, size: 18, color: onTap == null ? c.textMuted : c.textSecond))));
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 4),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(6),
-        child: Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.gray300),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Icon(icon, size: 18,
-              color: onTap == null ? AppColors.gray300 : AppColors.gray600),
-        ),
-      ),
-    );
-  }
-}
-
-class _PgNum extends StatelessWidget {
-  final int number;
-  final bool active;
-  final VoidCallback onTap;
-  const _PgNum({required this.number, required this.active, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 4),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(6),
-        child: Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            color: active ? AppColors.teal600 : AppColors.white,
-            border: Border.all(
-                color: active ? AppColors.teal600 : AppColors.gray300),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Center(
-            child: Text('$number',
-                style: TextStyle(
-                    fontSize: 13,
+Widget _PgNum(int n, bool active, VoidCallback onTap, AdaptiveColors c) =>
+    Padding(padding: const EdgeInsets.only(right: 4),
+        child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(6),
+            child: Container(width: 32, height: 32,
+                decoration: BoxDecoration(
+                    color: active ? AppColors.teal600 : c.cardBg,
+                    border: Border.all(color: active ? AppColors.teal600 : c.border),
+                    borderRadius: BorderRadius.circular(6)),
+                child: Center(child: Text('$n', style: TextStyle(fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: active ? AppColors.white : AppColors.gray700)),
-          ),
-        ),
-      ),
-    );
-  }
-}
+                    color: active ? AppColors.white : c.textSecond))))));

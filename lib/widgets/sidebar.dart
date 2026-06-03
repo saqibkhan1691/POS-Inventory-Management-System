@@ -3,8 +3,9 @@ import '../core/theme.dart';
 import '../core/routes.dart';
 
 /// ─────────────────────────────────────────────────────────────
-///  SIDEBAR  –  Persistent left navigation for Desktop POS
-///  Width: 240 px, Slate-900 dark background
+///  SIDEBAR  –  lib/widgets/sidebar.dart
+///  Calls onRouteSelected(route) → AppShellState.navigateTo()
+///  NO Navigator calls here — pure callback pattern
 /// ─────────────────────────────────────────────────────────────
 
 class _NavItem {
@@ -15,16 +16,15 @@ class _NavItem {
 }
 
 const _navItems = [
-  _NavItem(label: 'Billing',       icon: Icons.calculate_outlined,      route: AppRoutes.billing),
-  _NavItem(label: 'Add Product',   icon: Icons.add_box_outlined,        route: AppRoutes.addProduct),
-  _NavItem(label: 'Inventory',     icon: Icons.inventory_2_outlined,    route: AppRoutes.inventory),
-  _NavItem(label: 'Transactions',  icon: Icons.receipt_long_outlined,   route: AppRoutes.transactions),
-  _NavItem(label: 'Reports',       icon: Icons.bar_chart_outlined,      route: '/reports'),
-  _NavItem(label: 'Settings',      icon: Icons.settings_outlined,       route: AppRoutes.settings),
+  _NavItem(label: 'Billing',       icon: Icons.calculate_outlined,    route: AppRoutes.billing),
+  _NavItem(label: 'Add Product',   icon: Icons.add_box_outlined,      route: AppRoutes.addProduct),
+  _NavItem(label: 'Inventory',     icon: Icons.inventory_2_outlined,  route: AppRoutes.inventory),
+  _NavItem(label: 'Transactions',  icon: Icons.receipt_long_outlined, route: AppRoutes.transactions),
+  _NavItem(label: 'Reports',       icon: Icons.bar_chart_outlined,    route: '/reports'),
+  _NavItem(label: 'Settings',      icon: Icons.settings_outlined,     route: AppRoutes.settings),
 ];
 
 class AppSidebar extends StatelessWidget {
-  /// The current active route (e.g. AppRoutes.billing)
   final String activeRoute;
   final ValueChanged<String> onRouteSelected;
 
@@ -38,32 +38,47 @@ class AppSidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 240,
-      color: AppColors.slate900,
+      decoration: const BoxDecoration(
+        color: AppColors.slate900,
+        border: Border(right: BorderSide(color: AppColors.slate800)),
+      ),
       child: Column(
         children: [
-          // ── Logo / Store name ──────────────────────────────
+          // ── Logo ─────────────────────────────────────────
           Container(
             height: 64,
-            color: AppColors.slate950,
+            decoration: const BoxDecoration(
+              color: AppColors.slate950,
+              border: Border(bottom: BorderSide(color: AppColors.slate800)),
+            ),
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                const Icon(Icons.storefront_outlined, color: AppColors.teal600, size: 22),
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: AppColors.teal600,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.storefront_outlined,
+                      color: AppColors.white, size: 18),
+                ),
                 const SizedBox(width: 10),
                 const Text(
                   'SHREE SAREES',
                   style: TextStyle(
                     color: AppColors.white,
-                    fontSize: 15,
+                    fontSize: 14,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: 1.1,
+                    letterSpacing: 0.8,
                   ),
                 ),
               ],
             ),
           ),
 
-          // ── Nav items ──────────────────────────────────────
+          // ── Nav items ─────────────────────────────────────
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
@@ -99,7 +114,7 @@ class AppSidebar extends StatelessWidget {
   }
 }
 
-// ── Individual nav tile ────────────────────────────────────────────────────────
+// ── Individual tile ────────────────────────────────────────────────────────────
 class _NavTile extends StatefulWidget {
   final _NavItem item;
   final bool isActive;
@@ -129,7 +144,7 @@ class _NavTileState extends State<_NavTile> {
       bg = AppColors.teal600;
       fg = AppColors.white;
     } else if (_hovered && widget.isDanger) {
-      bg = const Color(0x1AEF4444); // red/10
+      bg = const Color(0x1AEF4444);
       fg = AppColors.red500;
     } else if (_hovered) {
       bg = AppColors.slate800;
@@ -160,10 +175,7 @@ class _NavTileState extends State<_NavTile> {
               Text(
                 widget.item.label,
                 style: TextStyle(
-                  color: fg,
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w500,
-                ),
+                    color: fg, fontSize: 13.5, fontWeight: FontWeight.w500),
               ),
             ],
           ),

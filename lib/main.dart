@@ -1,25 +1,18 @@
 import 'package:flutter/material.dart';
-import '../core/app.dart';
-import '../core/theme.dart';
-import '../core/routes.dart';
-import '../widgets/sidebar.dart';
-import '../widgets/top_bar.dart';
-import '../screens/billing_screen.dart';
-import '../screens/inventory_screen.dart';
-import '../screens/add_product_screen.dart';
-import '../screens/login_screen.dart';
-import '../screens/settings_screen.dart';
-import '../screens/transactions_screen.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'core/app.dart';
+import 'database/db_helper.dart';
 
-/// ─────────────────────────────────────────────────────────────
-///  MAIN  –  App entry point.
-///  Since no navigation package is specified yet, we use a
-///  simple StatefulWidget to manage current screen.
-///  File: lib/main.dart
-/// ─────────────────────────────────────────────────────────────
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
+
+  // DB initialize karo — tables + seed data first run pe
+  await DbHelper.instance.database;
+
   runApp(const POSApp());
+<<<<<<< HEAD
 }
 
 class POSApp extends StatelessWidget {
@@ -146,3 +139,6 @@ class _AppShellState extends State<AppShell> {
     );
   }
 }
+=======
+}
+>>>>>>> b384a73 (add SQLite database)
