@@ -2,23 +2,22 @@ import '../database/dao/sales_dao.dart';
 import '../database/dao/product_dao.dart';
 import '../models/sale_model.dart';
 import '../models/sale_item_model.dart';
-import '../widgets/cart_list.dart';  // CartItem
+import '../widgets/cart_list.dart';
 
 /// ─────────────────────────────────────────────────────────────
 ///  SALES REPOSITORY  –  lib/repositories/sales_repository.dart
-///  Handles completing a sale: save bill + items + update stock
 /// ─────────────────────────────────────────────────────────────
 class SalesRepository {
   final _salesDao   = SalesDao();
   final _productDao = ProductDao();
 
-  // ── COMPLETE A SALE ────────────────────────────────────────
+  // ── Complete a sale ────────────────────────────────────────
   Future<SaleModel> completeSale({
-    required List<CartItem>   cartItems,
-    required PaymentMethod    paymentMethod,
-    double                    discountPct = 0,
-    double                    taxRate     = 0.05,
-    String                    customer    = 'Walk-in Customer',
+    required List<CartItem> cartItems,
+    required PaymentMethod  paymentMethod,
+    double discountPct = 0,
+    double taxRate     = 0.05,
+    String customer    = 'Walk-in Customer',
   }) async {
     final subtotal       = cartItems.fold(0.0, (s, i) => s + i.total);
     final discountAmount = subtotal * (discountPct / 100);
@@ -40,9 +39,8 @@ class SalesRepository {
       createdAt:     now,
     );
 
-    // Build sale items
     final saleItems = cartItems.map((item) => SaleItemModel(
-      saleId:      0,  // set after insert
+      saleId:      0,
       productId:   int.parse(item.id),
       productName: item.name,
       barcode:     item.barcode,
@@ -51,7 +49,7 @@ class SalesRepository {
       total:       item.total,
     )).toList();
 
-    // Save to DB in one transaction
+    // Save sale + items in one transaction
     final saleId = await _salesDao.insertSaleWithItems(sale, saleItems);
 
     // Decrease stock for each product
@@ -59,6 +57,7 @@ class SalesRepository {
       await _productDao.adjustStock(int.parse(item.id), -item.qty);
     }
 
+    // Return saved sale with generated id
     return SaleModel(
       id:            saleId,
       invoiceId:     invoiceId,
@@ -73,25 +72,25 @@ class SalesRepository {
     );
   }
 
-  // ── GET ALL TRANSACTIONS ───────────────────────────────────
+  // ── Get all sales ──────────────────────────────────────────
   Future<List<SaleModel>> getAllSales({int limit = 50}) =>
       _salesDao.getAll(limit: limit);
 
-  // ── GET TODAY ──────────────────────────────────────────────
+  // ── Get today's sales ──────────────────────────────────────
   Future<List<SaleModel>> getTodaySales() => _salesDao.getToday();
 
-  // ── GET BY DATE RANGE ──────────────────────────────────────
+  // ── Get by date range ──────────────────────────────────────
   Future<List<SaleModel>> getByDateRange(DateTime from, DateTime to) =>
       _salesDao.getByDateRange(from, to);
 
-  // ── GET ITEMS FOR SALE ─────────────────────────────────────
+  // ── Get items for a sale ───────────────────────────────────
   Future<List<SaleItemModel>> getSaleItems(int saleId) =>
       _salesDao.getItemsForSale(saleId);
 
-  // ── REFUND ─────────────────────────────────────────────────
+  // ── Refund ─────────────────────────────────────────────────
   Future<void> refundSale(int saleId) =>
       _salesDao.updateStatus(saleId, SaleStatus.refunded);
 
-  // ── TODAY'S REVENUE ────────────────────────────────────────
+  // ── Today's revenue ────────────────────────────────────────
   Future<double> todayRevenue() => _salesDao.todayRevenue();
 }

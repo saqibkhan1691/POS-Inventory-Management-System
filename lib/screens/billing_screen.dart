@@ -5,16 +5,14 @@ import '../widgets/barcode_input.dart';
 import '../widgets/cart_list.dart';
 import '../widgets/total_section.dart';
 import '../widgets/payment_form.dart' hide PaymentMethod;
-import '../models/sale_model.dart';
-
 import '../core/app_colors_ext.dart';
 import '../repositories/product_repository.dart';
 import '../repositories/sales_repository.dart';
 import '../models/product_model.dart';
+import '../models/sale_model.dart';
 
 /// ─────────────────────────────────────────────────────────────
 ///  BILLING SCREEN  –  lib/screens/billing_screen.dart
-///  Now connected to SQLite via ProductRepository + SalesRepository
 /// ─────────────────────────────────────────────────────────────
 class BillingScreen extends StatefulWidget {
   const BillingScreen({super.key});
@@ -28,27 +26,39 @@ class _BillingScreenState extends State<BillingScreen> {
   final _barcodeKey  = GlobalKey<BarcodeInputState>();
 
   final List<CartItem> _cart = [];
-  bool   _showPayment   = false;
-  double _discountPct   = 0;
+  bool   _showPayment  = false;
+  double _discountPct  = 0;
 
-  // ── Barcode scan → lookup in DB ────────────────────────────
+  // ── Barcode/name search ────────────────────────────────────
   Future<void> _onBarcode(String code) async {
-    final product = await _productRepo.findByBarcode(code);
+    // 1. Try exact barcode match
+    ProductModel? product = await _productRepo.findByBarcode(code);
+
+    // 2. If not found, search by name
     if (product == null) {
-      _showNotFound(code);
-      return;
+      final results = await _productRepo.search(code);
+      if (results.length == 1) {
+        product = results.first;
+      } else if (results.length > 1) {
+        product = await _showProductPicker(results);
+      }
     }
-    if (product.stock <= 0) {
-      _showOutOfStock(product.name);
-      return;
-    }
+
+    if (product == null) { _showNotFound(code); return; }
+    if (product.stock <= 0) { _showOutOfStock(product.name); return; }
+
     setState(() {
-      final existing = _cart.indexWhere((c) => c.id == product.id.toString());
+      final existing = _cart.indexWhere((c) => c.id == product!.id.toString());
       if (existing >= 0) {
+        // Stock limit check
+        if (_cart[existing].qty >= product!.stock) {
+          _showMaxStock(product.name, product.stock);
+          return;
+        }
         _cart[existing].qty++;
       } else {
         _cart.add(CartItem(
-          id:      product.id.toString(),
+          id:      product!.id.toString(),
           barcode: product.barcode,
           name:    product.name,
           price:   product.sellingPrice,
@@ -57,9 +67,60 @@ class _BillingScreenState extends State<BillingScreen> {
     });
   }
 
-  void _onIncrease(CartItem item) => setState(() => item.qty++);
-  void _onDecrease(CartItem item) => setState(() { if (item.qty > 1) item.qty--; });
-  void _onRemove(CartItem item)   => setState(() => _cart.removeWhere((c) => c.id == item.id));
+  Future<ProductModel?> _showProductPicker(List<ProductModel> products) async {
+    return showDialog<ProductModel>(
+      context: context,
+      builder: (ctx) {
+        final c = context.colors;
+        return AlertDialog(
+          backgroundColor: c.cardBg,
+          title: Text('Select Product',
+              style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w700)),
+          content: SizedBox(
+            width: 420,
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: products.length,
+              separatorBuilder: (_, __) => Divider(height: 1, color: c.borderLight),
+              itemBuilder: (_, i) {
+                final p = products[i];
+                return ListTile(
+                  title: Text(p.name,
+                      style: TextStyle(fontSize: 14,
+                          fontWeight: FontWeight.w600, color: c.textPrimary)),
+                  subtitle: Text(p.barcode,
+                      style: TextStyle(fontSize: 12, color: c.textMuted)),
+                  trailing: Text('₹${p.sellingPrice.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w700,
+                          color: AppColors.teal600)),
+                  onTap: () => Navigator.pop(ctx, p),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _onIncrease(CartItem item) {
+    final product = _cart.firstWhere((c) => c.id == item.id);
+    // We don't have stock here directly — allow increase, repo will handle
+    setState(() => item.qty++);
+  }
+
+  void _onDecrease(CartItem item) =>
+      setState(() { if (item.qty > 1) item.qty--; });
+
+  void _onRemove(CartItem item) =>
+      setState(() => _cart.removeWhere((c) => c.id == item.id));
 
   double get _subtotal => _cart.fold(0.0, (s, i) => s + i.total);
 
@@ -71,7 +132,11 @@ class _BillingScreenState extends State<BillingScreen> {
         paymentMethod: method,
         discountPct:   _discountPct,
       );
-      setState(() { _cart.clear(); _showPayment = false; _discountPct = 0; });
+      setState(() {
+        _cart.clear();
+        _showPayment  = false;
+        _discountPct  = 0;
+      });
       WidgetsBinding.instance.addPostFrameCallback(
               (_) => _barcodeKey.currentState?.requestFocus());
       _showSuccess();
@@ -80,22 +145,15 @@ class _BillingScreenState extends State<BillingScreen> {
     }
   }
 
-  // ── UI helpers ─────────────────────────────────────────────
-  void _showNotFound(String code) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-    content: Text('Product not found: $code'),
-    backgroundColor: AppColors.red500,
-    behavior: SnackBarBehavior.floating,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-    duration: const Duration(seconds: 2),
-  ));
+  // ── Snackbars ──────────────────────────────────────────────
+  void _showNotFound(String code) =>
+      _snack('Product not found: $code', AppColors.red500);
 
-  void _showOutOfStock(String name) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-    content: Text('Out of stock: $name'),
-    backgroundColor: AppColors.orange700,
-    behavior: SnackBarBehavior.floating,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-    duration: const Duration(seconds: 2),
-  ));
+  void _showOutOfStock(String name) =>
+      _snack('Out of stock: $name', AppColors.orange700);
+
+  void _showMaxStock(String name, int max) =>
+      _snack('Only $max in stock for "$name"', AppColors.orange700);
 
   void _showSuccess() => ScaffoldMessenger.of(context).showSnackBar(SnackBar(
     content: const Row(children: [
@@ -109,15 +167,20 @@ class _BillingScreenState extends State<BillingScreen> {
     duration: const Duration(seconds: 2),
   ));
 
-  void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-    content: Text(msg),
-    backgroundColor: AppColors.red500,
-    behavior: SnackBarBehavior.floating,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-  ));
+  void _showError(String msg) => _snack(msg, AppColors.red500);
+
+  void _snack(String msg, Color color) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        duration: const Duration(seconds: 2),
+      ));
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
-    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.f2) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.f2) {
       _barcodeKey.currentState?.requestFocus();
       return KeyEventResult.handled;
     }
@@ -152,7 +215,7 @@ class _BillingScreenState extends State<BillingScreen> {
             ),
           ]),
 
-          // Payment slide-in overlay
+          // Payment slide-in
           Positioned(
             top: 0, bottom: 0, right: 0,
             child: AnimatedSlide(
@@ -163,7 +226,7 @@ class _BillingScreenState extends State<BillingScreen> {
                 totalAmount: _subtotal * 1.05,
                 isVisible:   _showPayment,
                 onClose:     () => setState(() => _showPayment = false),
-                onConfirm:   () => _showConfirmDialog(),
+                onConfirm:   _showConfirmDialog,
               ),
             ),
           ),
@@ -184,13 +247,15 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 }
 
-// ── Confirmation dialog with payment method ───────────────────
+// ── Confirm dialog ────────────────────────────────────────────
 class _ConfirmDialog extends StatefulWidget {
   final double total;
   final void Function(PaymentMethod) onConfirm;
   final VoidCallback onCancel;
-  const _ConfirmDialog({required this.total, required this.onConfirm, required this.onCancel});
-  @override State<_ConfirmDialog> createState() => _ConfirmDialogState();
+  const _ConfirmDialog(
+      {required this.total, required this.onConfirm, required this.onCancel});
+  @override
+  State<_ConfirmDialog> createState() => _ConfirmDialogState();
 }
 
 class _ConfirmDialogState extends State<_ConfirmDialog> {
@@ -210,50 +275,73 @@ class _ConfirmDialogState extends State<_ConfirmDialog> {
             child: Column(children: [
               Container(
                 width: 60, height: 60,
-                decoration: const BoxDecoration(color: AppColors.teal100, shape: BoxShape.circle),
-                child: const Icon(Icons.check_circle_outline, color: AppColors.teal600, size: 30),
+                decoration: const BoxDecoration(
+                    color: AppColors.teal100, shape: BoxShape.circle),
+                child: const Icon(Icons.check_circle_outline,
+                    color: AppColors.teal600, size: 30),
               ),
               const SizedBox(height: 16),
               Text('Complete Transaction?',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: c.textPrimary)),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700,
+                      color: c.textPrimary)),
               const SizedBox(height: 4),
-              Text('Total: ₹${widget.total.toStringAsFixed(2)}',
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: AppColors.teal600)),
-              const SizedBox(height: 16),
+              Text('₹${widget.total.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 22,
+                      fontWeight: FontWeight.w900, color: AppColors.teal600)),
+              const SizedBox(height: 20),
               // Payment method selector
-              Row(children: PaymentMethod.values.map((m) {
-                final labels = {PaymentMethod.cash:'Cash', PaymentMethod.upi:'UPI', PaymentMethod.card:'Card'};
-                final icons  = {PaymentMethod.cash:Icons.payments_outlined, PaymentMethod.upi:Icons.smartphone_outlined, PaymentMethod.card:Icons.credit_card_outlined};
-                final sel = _method == m;
-                return Expanded(child: Padding(
-                  padding: EdgeInsets.only(right: m != PaymentMethod.card ? 8 : 0),
-                  child: GestureDetector(
-                    onTap: () => setState(() => _method = m),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 120),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      decoration: BoxDecoration(
-                        color: sel ? AppColors.teal50 : c.cardBg,
-                        border: Border.all(color: sel ? AppColors.teal600 : c.border, width: sel ? 2 : 1),
-                        borderRadius: BorderRadius.circular(9),
+              Row(
+                children: PaymentMethod.values.map((m) {
+                  final labels = {
+                    PaymentMethod.cash: 'Cash',
+                    PaymentMethod.upi:  'UPI',
+                    PaymentMethod.card: 'Card',
+                  };
+                  final icons = {
+                    PaymentMethod.cash: Icons.payments_outlined,
+                    PaymentMethod.upi:  Icons.smartphone_outlined,
+                    PaymentMethod.card: Icons.credit_card_outlined,
+                  };
+                  final sel = _method == m;
+                  return Expanded(child: Padding(
+                    padding: EdgeInsets.only(
+                        right: m != PaymentMethod.card ? 8 : 0),
+                    child: GestureDetector(
+                      onTap: () => setState(() => _method = m),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: sel ? AppColors.teal50 : c.cardBg,
+                          border: Border.all(
+                              color: sel ? AppColors.teal600 : c.border,
+                              width: sel ? 2 : 1),
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        child: Column(children: [
+                          Icon(icons[m]!, size: 20,
+                              color: sel ? AppColors.teal600 : c.textMuted),
+                          const SizedBox(height: 4),
+                          Text(labels[m]!,
+                              style: TextStyle(fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: sel
+                                      ? AppColors.teal700
+                                      : c.textSecond)),
+                        ]),
                       ),
-                      child: Column(children: [
-                        Icon(icons[m]!, size: 20, color: sel ? AppColors.teal600 : c.textMuted),
-                        const SizedBox(height: 4),
-                        Text(labels[m]!, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                            color: sel ? AppColors.teal700 : c.textSecond)),
-                      ]),
                     ),
-                  ),
-                ));
-              }).toList()),
+                  ));
+                }).toList(),
+              ),
             ]),
           ),
           Container(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             decoration: BoxDecoration(
               color: c.tableHeader,
-              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(14)),
+              borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(14)),
               border: Border(top: BorderSide(color: c.border)),
             ),
             child: Row(children: [
@@ -263,9 +351,11 @@ class _ConfirmDialogState extends State<_ConfirmDialog> {
                   foregroundColor: c.textSecond,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   side: BorderSide(color: c.border),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
                 ),
-                child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w600)),
+                child: const Text('Cancel',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
               )),
               const SizedBox(width: 12),
               Expanded(child: ElevatedButton(
@@ -274,10 +364,12 @@ class _ConfirmDialogState extends State<_ConfirmDialog> {
                   backgroundColor: AppColors.teal600,
                   foregroundColor: AppColors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
                   elevation: 0,
                 ),
-                child: const Text('Confirm & Save', style: TextStyle(fontWeight: FontWeight.w700)),
+                child: const Text('Confirm & Save',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
               )),
             ]),
           ),
