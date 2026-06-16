@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../core/theme.dart';
 import '../widgets/product_tile.dart';
 import '../core/app_colors_ext.dart';
@@ -272,26 +273,41 @@ class _InventoryScreenState extends State<InventoryScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: c.cardBg,
-        title: Text('Delete Product',
-            style: TextStyle(color: c.textPrimary)),
+        title: Text('Delete Product', style: TextStyle(color: c.textPrimary)),
         content: Text('Delete "${p.name}"? This cannot be undone.',
             style: TextStyle(color: c.textSecond)),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete',
-                style: TextStyle(color: AppColors.red500)),
+            child: const Text('Delete', style: TextStyle(color: AppColors.red500)),
           ),
         ],
       ),
     );
-    if (confirm == true && p.id != null) {
+    if (confirm != true || p.id == null) return;
+
+    try {
       await _repo.deleteProduct(p.id!);
-      _loadData();
+      await _loadData();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('"${p.name}" deleted successfully'),
+          backgroundColor: AppColors.teal600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 2),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not delete: $e'),
+          backgroundColor: AppColors.red500,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ));
+      }
     }
   }
 }
@@ -300,24 +316,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
 class _EditProductDialog extends StatefulWidget {
   final ProductModel product;
   final VoidCallback onSaved;
-  const _EditProductDialog(
-      {required this.product, required this.onSaved});
+  const _EditProductDialog({required this.product, required this.onSaved});
   @override
   State<_EditProductDialog> createState() => _EditProductDialogState();
 }
 
 class _EditProductDialogState extends State<_EditProductDialog> {
   final _repo = ProductRepository();
-  late final _nameCtrl  =
-  TextEditingController(text: widget.product.name);
-  late final _priceCtrl =
-  TextEditingController(text: widget.product.sellingPrice.toString());
-  late final _purchCtrl =
-  TextEditingController(text: widget.product.purchasePrice.toString());
-  late final _stockCtrl =
-  TextEditingController(text: widget.product.stock.toString());
-  late final _alertCtrl =
-  TextEditingController(text: widget.product.alertQty.toString());
+  late final _nameCtrl  = TextEditingController(text: widget.product.name);
+  late final _priceCtrl = TextEditingController(text: widget.product.sellingPrice.toString());
+  late final _purchCtrl = TextEditingController(text: widget.product.purchasePrice.toString());
+  late final _stockCtrl = TextEditingController(text: widget.product.stock.toString());
+  late final _alertCtrl = TextEditingController(text: widget.product.alertQty.toString());
   bool _saving = false;
 
   @override
@@ -333,43 +343,36 @@ class _EditProductDialogState extends State<_EditProductDialog> {
     return AlertDialog(
       backgroundColor: c.cardBg,
       title: Text('Edit Product',
-          style: TextStyle(
-              color: c.textPrimary, fontWeight: FontWeight.w700)),
+          style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w700)),
       content: SizedBox(
         width: 500,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           _field('Product Name', _nameCtrl, c),
           const SizedBox(height: 12),
           Row(children: [
-            Expanded(child: _field('Selling Price (₹)', _priceCtrl, c,
-                keyboard: TextInputType.number)),
+            Expanded(child: _field('Selling Price (₹)', _priceCtrl, c, decimal: true)),
             const SizedBox(width: 12),
-            Expanded(child: _field('Purchase Price (₹)', _purchCtrl, c,
-                keyboard: TextInputType.number)),
+            Expanded(child: _field('Purchase Price (₹)', _purchCtrl, c, decimal: true)),
           ]),
           const SizedBox(height: 12),
           Row(children: [
-            Expanded(child: _field('Stock', _stockCtrl, c,
-                keyboard: TextInputType.number)),
+            Expanded(child: _field('Stock', _stockCtrl, c, intOnly: true)),
             const SizedBox(width: 12),
-            Expanded(child: _field('Alert Qty', _alertCtrl, c,
-                keyboard: TextInputType.number)),
+            Expanded(child: _field('Alert Qty', _alertCtrl, c, intOnly: true)),
           ]),
         ]),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child:
-          Text('Cancel', style: TextStyle(color: c.textSecond)),
+          child: Text('Cancel', style: TextStyle(color: c.textSecond)),
         ),
         ElevatedButton(
           onPressed: _saving ? null : _save,
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.teal600,
             foregroundColor: AppColors.white,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
           child: Text(_saving ? 'Saving…' : 'Save Changes'),
         ),
@@ -377,51 +380,90 @@ class _EditProductDialogState extends State<_EditProductDialog> {
     );
   }
 
-  Widget _field(String label, TextEditingController ctrl,
-      AdaptiveColors c,
-      {TextInputType? keyboard}) =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(label,
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: c.textMuted)),
-        const SizedBox(height: 4),
-        TextField(
-          controller: ctrl,
-          keyboardType: keyboard,
-          decoration: InputDecoration(
-            filled: true, fillColor: c.inputFill,
-            contentPadding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: c.border)),
-            enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: c.border)),
-            focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(
-                    color: AppColors.teal600, width: 2)),
-          ),
-          style: TextStyle(fontSize: 14, color: c.textPrimary),
+  // ── Field with input restriction (digits only / decimal only) ─
+  Widget _field(String label, TextEditingController ctrl, AdaptiveColors c,
+      {bool intOnly = false, bool decimal = false}) {
+    List<TextInputFormatter>? formatters;
+    if (intOnly) {
+      // allow only whole numbers (and an optional leading '-' so user
+      // can SEE if they typed something invalid — we still validate)
+      formatters = [FilteringTextInputFormatter.allow(RegExp(r'[0-9]'))];
+    } else if (decimal) {
+      formatters = [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))];
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c.textMuted)),
+      const SizedBox(height: 4),
+      TextField(
+        controller: ctrl,
+        keyboardType: (intOnly || decimal) ? TextInputType.number : TextInputType.text,
+        inputFormatters: formatters,
+        decoration: InputDecoration(
+          filled: true, fillColor: c.inputFill,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: c.border)),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: c.border)),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: AppColors.teal600, width: 2)),
         ),
-      ]);
+        style: TextStyle(fontSize: 14, color: c.textPrimary),
+      ),
+    ]);
+  }
+
+  void _toast(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: color,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      duration: const Duration(seconds: 2),
+    ));
+  }
 
   Future<void> _save() async {
+    // ── Validation ───────────────────────────────────────────
+    if (_nameCtrl.text.trim().isEmpty) {
+      _toast('Product name cannot be empty', AppColors.red500);
+      return;
+    }
+
+    final sellingPrice  = double.tryParse(_priceCtrl.text);
+    final purchasePrice = double.tryParse(_purchCtrl.text);
+    final stock         = int.tryParse(_stockCtrl.text);
+    final alertQty      = int.tryParse(_alertCtrl.text);
+
+    if (sellingPrice == null || purchasePrice == null) {
+      _toast('Please enter valid numbers for prices', AppColors.red500);
+      return;
+    }
+    if (stock == null || alertQty == null) {
+      _toast('Please enter valid whole numbers for stock fields', AppColors.red500);
+      return;
+    }
+    if (sellingPrice < 0 || purchasePrice < 0) {
+      _toast('Price cannot be negative', AppColors.red500);
+      return;
+    }
+    if (stock < 0) {
+      _toast('Stock cannot be negative', AppColors.red500);
+      return;
+    }
+    if (alertQty < 0) {
+      _toast('Alert quantity cannot be negative', AppColors.red500);
+      return;
+    }
+
     setState(() => _saving = true);
     try {
       await _repo.updateProduct(widget.product.copyWith(
         name:          _nameCtrl.text.trim(),
-        sellingPrice:  double.tryParse(_priceCtrl.text)
-            ?? widget.product.sellingPrice,
-        purchasePrice: double.tryParse(_purchCtrl.text)
-            ?? widget.product.purchasePrice,
-        stock:         int.tryParse(_stockCtrl.text)
-            ?? widget.product.stock,
-        alertQty:      int.tryParse(_alertCtrl.text)
-            ?? widget.product.alertQty,
+        sellingPrice:  sellingPrice,
+        purchasePrice: purchasePrice,
+        stock:         stock,
+        alertQty:      alertQty,
         updatedAt:     DateTime.now(),
       ));
       if (mounted) {
@@ -429,13 +471,7 @@ class _EditProductDialogState extends State<_EditProductDialog> {
         widget.onSaved();
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: AppColors.red500,
-          behavior: SnackBarBehavior.floating,
-        ));
-      }
+      if (mounted) _toast('Error: $e', AppColors.red500);
     } finally {
       if (mounted) setState(() => _saving = false);
     }

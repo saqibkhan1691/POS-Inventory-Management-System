@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../core/theme.dart';
 import '../core/app_colors_ext.dart';
 import '../repositories/product_repository.dart';
@@ -63,29 +64,54 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
   Future<void> _onSave() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+
     if (_category.isEmpty || _category == 'Other') {
       _snack('Please select or enter a category', AppColors.orange700);
       return;
     }
+
+    // ── Numeric validation ─────────────────────────────────────
+    final purchasePrice = double.tryParse(_purchaseCtrl.text);
+    final sellingPrice  = double.tryParse(_sellingCtrl.text);
+    final stock         = int.tryParse(_stockCtrl.text);
+    final alertQty      = int.tryParse(_alertQtyCtrl.text);
+
+    if (purchasePrice == null || sellingPrice == null) {
+      _snack('Please enter valid numbers for prices', AppColors.red500);
+      return;
+    }
+    if (purchasePrice < 0 || sellingPrice < 0) {
+      _snack('Price cannot be negative', AppColors.red500);
+      return;
+    }
+    if (stock == null || alertQty == null) {
+      _snack('Please enter valid whole numbers for Stock / Alert Qty', AppColors.red500);
+      return;
+    }
+    if (stock < 0) {
+      _snack('Stock cannot be negative', AppColors.red500);
+      return;
+    }
+    if (alertQty < 0) {
+      _snack('Alert quantity cannot be negative', AppColors.red500);
+      return;
+    }
+
     setState(() => _saving = true);
     try {
-      final barcode = _autoSku
-          ? _generateBarcode()
-          : _skuCtrl.text.trim();
+      final barcode = _autoSku ? _generateBarcode() : _skuCtrl.text.trim();
       await _repo.addProduct(
         name:          _nameCtrl.text.trim(),
         barcode:       barcode,
         category:      _category,
         brand:         _brand == 'Other' ? 'In-House' : _brand,
-        purchasePrice: double.tryParse(_purchaseCtrl.text) ?? 0,
-        sellingPrice:  double.tryParse(_sellingCtrl.text)  ?? 0,
+        purchasePrice: purchasePrice,
+        sellingPrice:  sellingPrice,
         taxRate:       (double.tryParse(_taxType) ?? 5) / 100,
-        stock:         int.tryParse(_stockCtrl.text)    ?? 0,
-        alertQty:      int.tryParse(_alertQtyCtrl.text) ?? 5,
+        stock:         stock,
+        alertQty:      alertQty,
         barcodeType:   _barcodeType,
-        description:   _descCtrl.text.trim().isEmpty
-            ? null
-            : _descCtrl.text.trim(),
+        description:   _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
       );
       if (mounted) {
         _snack('Product saved successfully!', AppColors.teal600);
@@ -204,6 +230,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
                         TextFormField(
                           controller: _purchaseCtrl,
                           keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))
+                          ],
                           validator: (v) =>
                           (v?.isEmpty ?? true) ? 'Required' : null,
                           decoration: _deco('0.00', c),
@@ -214,6 +243,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
                         TextFormField(
                           controller: _sellingCtrl,
                           keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))
+                          ],
                           validator: (v) =>
                           (v?.isEmpty ?? true) ? 'Required' : null,
                           decoration: _deco('0.00', c),
@@ -234,6 +266,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
                         TextFormField(
                           controller: _stockCtrl,
                           keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(RegExp(r'[0-9]'))
+                          ],
                           decoration: _deco('0', c),
                           style: TextStyle(color: c.textPrimary),
                         ))),
@@ -242,6 +277,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
                         TextFormField(
                           controller: _alertQtyCtrl,
                           keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(RegExp(r'[0-9]'))
+                          ],
                           decoration: _deco('5', c),
                           style: TextStyle(color: c.textPrimary),
                         ))),

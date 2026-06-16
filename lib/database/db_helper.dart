@@ -33,8 +33,9 @@ class DbHelper {
       onCreate:  _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
-        // Enable foreign keys
-        await db.execute('PRAGMA foreign_keys = ON');
+        // FK enforcement OFF — sale_items stores a snapshot (name/barcode/price)
+        // so a product can be safely deleted even after it has been sold.
+        await db.execute('PRAGMA foreign_keys = OFF');
       },
     );
   }

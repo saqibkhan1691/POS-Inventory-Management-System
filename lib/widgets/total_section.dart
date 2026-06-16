@@ -4,23 +4,54 @@ import '../core/app_colors_ext.dart';
 
 class TotalSection extends StatefulWidget {
   final double subtotal;
+  final int    itemCount;          // ← real cart item count
   final double taxRate;
-  final bool cartEmpty;
+  final bool   cartEmpty;
   final VoidCallback onProceed;
-  const TotalSection({super.key, required this.subtotal, required this.onProceed,
-    this.taxRate = 0.05, this.cartEmpty = true});
+  final ValueChanged<double> onDiscountChanged; // notifies parent of % value
+
+  const TotalSection({
+    super.key,
+    required this.subtotal,
+    required this.itemCount,
+    required this.onProceed,
+    required this.onDiscountChanged,
+    this.taxRate = 0.05,
+    this.cartEmpty = true,
+  });
   @override State<TotalSection> createState() => _TotalSectionState();
 }
 
 class _TotalSectionState extends State<TotalSection> {
-  double _discount = 0;
-  final _discCtrl  = TextEditingController(text: '0');
+  double _discount = 0; // percent (0-100)
+  final _discCtrl   = TextEditingController(text: '0');
+  String? _discError;
 
-  double get tax => (widget.subtotal - _discountAmount) * widget.taxRate;
-  double get finalTotal => widget.subtotal - _discountAmount + tax;
-  double get _discountAmount => (widget.subtotal * _discount) / 100;
+  double get discountAmount => widget.subtotal * (_discount / 100);
+  double get taxableAmount  => widget.subtotal - discountAmount;
+  double get tax            => taxableAmount * widget.taxRate;
+  double get finalTotal     => taxableAmount + tax;
 
   @override void dispose() { _discCtrl.dispose(); super.dispose(); }
+
+  void _onDiscountChanged(String v) {
+    if (v.trim().isEmpty) {
+      setState(() { _discount = 0; _discError = null; });
+      widget.onDiscountChanged(0);
+      return;
+    }
+    final val = double.tryParse(v);
+    if (val == null) {
+      setState(() => _discError = 'Enter a valid number');
+      return; // don't update discount on invalid input
+    }
+    if (val < 0 || val > 100) {
+      setState(() => _discError = '0–100 only');
+      return;
+    }
+    setState(() { _discount = val; _discError = null; });
+    widget.onDiscountChanged(val);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +77,7 @@ class _TotalSectionState extends State<TotalSection> {
             const Text('Bill Summary', style: TextStyle(color: AppColors.white,
                 fontSize: 17, fontWeight: FontWeight.w700)),
             const SizedBox(height: 2),
-            Text('Items in cart: ${widget.cartEmpty ? 0 : "–"}',
+            Text('Items in cart: ${widget.itemCount}',
                 style: const TextStyle(fontSize: 12, color: AppColors.slate400)),
           ]),
         ),
@@ -54,22 +85,24 @@ class _TotalSectionState extends State<TotalSection> {
         Expanded(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-            child: Column(children: [
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               _Row('Subtotal', '₹${widget.subtotal.toStringAsFixed(2)}', c),
               const SizedBox(height: 14),
-              // Discount input
+              // Discount % input
               Row(children: [
-                Expanded(child: Text('Discount (₹)',
+                Expanded(child: Text('Discount (%)',
                     style: TextStyle(fontSize: 14, color: c.textSecond))),
                 SizedBox(width: 88, height: 34,
                   child: TextField(
                     controller: _discCtrl,
-                    keyboardType: TextInputType.number,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     textAlign: TextAlign.right,
-                    onChanged: (v) => setState(() => _discount = double.tryParse(v) ?? 0),
+                    onChanged: _onDiscountChanged,
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: c.textPrimary),
                     decoration: InputDecoration(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                      suffixText: '%',
+                      suffixStyle: TextStyle(fontSize: 12, color: c.textMuted),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                       filled: true, fillColor: c.inputFill,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(6),
                           borderSide: BorderSide(color: c.border)),
@@ -81,6 +114,16 @@ class _TotalSectionState extends State<TotalSection> {
                   ),
                 ),
               ]),
+              if (_discError != null) Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Align(alignment: Alignment.centerRight,
+                    child: Text(_discError!, style: const TextStyle(
+                        fontSize: 11, color: AppColors.red500, fontWeight: FontWeight.w600))),
+              ),
+              if (_discount > 0) Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: _Row('Discount Amount', '- ₹${discountAmount.toStringAsFixed(2)}', c),
+              ),
               const SizedBox(height: 14),
               _Row('Tax (GST ${(widget.taxRate*100).toStringAsFixed(0)}%)',
                   '₹${tax.toStringAsFixed(2)}', c),
