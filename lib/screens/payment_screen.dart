@@ -75,15 +75,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   ),
                 ),
 
-                // Body – reuse PaymentForm widget but always visible
                 SizedBox(
                   height: 500,
-                  child: PaymentForm(
-                    totalAmount: widget.totalAmount,
-                    isVisible: true,
-                    onClose: () => widget.onPaymentComplete?.call(),
-                    onConfirm: () => widget.onPaymentComplete?.call(),
-                  ),
                 ),
               ],
             ),

@@ -39,7 +39,7 @@ class _BillingScreenState extends State<BillingScreen> {
     setState(() {
       final idx = _cart.indexWhere((c) => c.id == product.id.toString());
       if (idx >= 0) {
-        if (_cart[idx].qty >= _cart[idx].maxStrr ock) {
+        if (_cart[idx].qty >= _cart[idx].maxStock) {
           _showMaxStock(product.name, _cart[idx].maxStock);
         } else {
           _cart[idx].qty++;
