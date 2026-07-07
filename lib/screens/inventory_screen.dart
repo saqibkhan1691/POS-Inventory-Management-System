@@ -70,6 +70,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     category: p.category,
     price:    p.sellingPrice,
     stock:    p.stock,
+    alertQty: p.alertQty,
   );
 
   List<ProductModel> get _paged {

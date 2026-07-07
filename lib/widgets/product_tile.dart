@@ -8,10 +8,21 @@ class ProductTileData {
   final String id, name, barcode, category;
   final double price;
   final int stock;
-  const ProductTileData({required this.id, required this.name, required this.barcode,
-    required this.category, required this.price, required this.stock});
-  StockStatus get status => stock == 0 ? StockStatus.outOfStock
-      : stock <= 5 ? StockStatus.lowStock : StockStatus.inStock;
+  final int alertQty;
+  const ProductTileData({
+    required this.id,
+    required this.name,
+    required this.barcode,
+    required this.category,
+    required this.price,
+    required this.stock,
+    this.alertQty = 5,
+  });
+  StockStatus get status => stock == 0
+      ? StockStatus.outOfStock
+      : stock <= alertQty
+      ? StockStatus.lowStock
+      : StockStatus.inStock;
 }
 
 class ProductTile extends StatefulWidget {

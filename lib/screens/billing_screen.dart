@@ -167,7 +167,7 @@ class _BillingScreenState extends State<BillingScreen> {
   void _showNotFound(String code)        => _snack('Product not found: $code', AppColors.red500);
   void _showOutOfStock(String name)      => _snack('Out of stock: $name', AppColors.orange700);
   void _showMaxStock(String name, int max) =>
-      _snack('Only $max in stock for "$name" — limit reached', AppColors.orange700);
+      _snack('Maximum stock limit reached for $name. Available: $max', AppColors.orange700);
 
   void _showSuccess() => ScaffoldMessenger.of(context).showSnackBar(SnackBar(
     content: const Row(children: [
