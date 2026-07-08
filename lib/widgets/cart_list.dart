@@ -6,6 +6,7 @@ import '../core/app_colors_ext.dart';
 class CartItem {
   final String id, barcode, name;
   final double price;
+  final double taxRate;
   int qty;
   final int maxStock;
   CartItem({
@@ -13,6 +14,7 @@ class CartItem {
     required this.barcode,
     required this.name,
     required this.price,
+    this.taxRate = 0.05,
     this.qty = 1,
     this.maxStock = 9999,
   });

@@ -5,7 +5,7 @@ import '../core/app_colors_ext.dart';
 class TotalSection extends StatefulWidget {
   final double subtotal;
   final int    itemCount;          // ← real cart item count
-  final double taxRate;
+  final double taxAmount;
   final bool   cartEmpty;
   final VoidCallback onProceed;
   final ValueChanged<double> onDiscountChanged; // notifies parent of % value
@@ -13,10 +13,10 @@ class TotalSection extends StatefulWidget {
   const TotalSection({
     super.key,
     required this.subtotal,
+    required this.taxAmount,
     required this.itemCount,
     required this.onProceed,
     required this.onDiscountChanged,
-    this.taxRate = 0.05,
     this.cartEmpty = true,
   });
   @override State<TotalSection> createState() => _TotalSectionState();
@@ -29,8 +29,8 @@ class _TotalSectionState extends State<TotalSection> {
 
   double get discountAmount => widget.subtotal * (_discount / 100);
   double get taxableAmount  => widget.subtotal - discountAmount;
-  double get tax            => taxableAmount * widget.taxRate;
-  double get finalTotal     => taxableAmount + tax;
+  double get tax            => widget.taxAmount;
+  double get finalTotal     => taxableAmount + widget.taxAmount;
 
   @override void dispose() { _discCtrl.dispose(); super.dispose(); }
 
@@ -125,8 +125,7 @@ class _TotalSectionState extends State<TotalSection> {
                 child: _Row('Discount Amount', '- ₹${discountAmount.toStringAsFixed(2)}', c),
               ),
               const SizedBox(height: 14),
-              _Row('Tax (GST ${(widget.taxRate*100).toStringAsFixed(0)}%)',
-                  '₹${tax.toStringAsFixed(2)}', c),
+              _Row('Tax (GST)', '₹${tax.toStringAsFixed(2)}', c),
               Padding(padding: const EdgeInsets.symmetric(vertical: 16),
                   child: Divider(height: 1, thickness: 1, color: c.divider)),
               Align(alignment: Alignment.centerLeft,

@@ -27,7 +27,7 @@ class _BillingScreenState extends State<BillingScreen> {
 
   final List<CartItem> _cart = [];
   bool   _showPayment  = false;
-  double _discountPct  = 0;          // synced from TotalSection
+  double _discountPct  = 0;
 
   // ── Live search (used by BarcodeInput suggestions) ────────
   Future<List<ProductModel>> _onSearch(String query) =>
@@ -50,6 +50,7 @@ class _BillingScreenState extends State<BillingScreen> {
           barcode:  product.barcode,
           name:     product.name,
           price:    product.sellingPrice,
+          taxRate:  product.taxRate,
           maxStock: product.stock,
         ));
       }
@@ -139,7 +140,17 @@ class _BillingScreenState extends State<BillingScreen> {
 
   double get _subtotal       => _cart.fold(0.0, (s, i) => s + i.total);
   double get _discountAmount => _subtotal * (_discountPct / 100);
-  double get _taxAmount      => (_subtotal - _discountAmount) * 0.05;
+  //double get _taxAmount      => (_subtotal - _discountAmount) * 0.05;
+  double get _taxAmount {
+    if (_cart.isEmpty) return 0;
+    double totalTax = 0;
+    for (final item in _cart) {
+      final itemSubtotal  = item.price * item.qty;
+      final itemDiscount  = itemSubtotal * (_discountPct / 100);
+      totalTax += (itemSubtotal - itemDiscount) * item.taxRate;
+    }
+    return totalTax;
+  }
   double get _finalTotal     => _subtotal - _discountAmount + _taxAmount;
 
   // ── Confirm payment → save to SQLite ──────────────────────
@@ -230,6 +241,7 @@ class _BillingScreenState extends State<BillingScreen> {
             const SizedBox(width: 16),
             TotalSection(
               subtotal:  _subtotal,
+              taxAmount:  _taxAmount,
               itemCount: _cart.length,
               cartEmpty: _cart.isEmpty,
               onProceed: () => setState(() => _showPayment = true),
