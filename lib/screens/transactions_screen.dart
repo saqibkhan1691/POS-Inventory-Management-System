@@ -26,6 +26,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   String _period = 'Today';
   String _method = 'All Payment Methods';
   int    _page   = 1;
+  DateTime? _customFrom;
+  DateTime? _customTo;
   static const _perPage = 10;
 
   @override
@@ -54,6 +56,13 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       case 'Last 30 Days':
         sales = await _repo.getByDateRange(
             DateTime.now().subtract(const Duration(days: 30)), DateTime.now());
+        break;
+      case 'Custom Date Range':
+        if (_customFrom != null && _customTo != null) {
+          sales = await _repo.getByDateRange(_customFrom!, _customTo!);
+        } else {
+          sales = await _repo.getAllSales(limit: 200);
+        }
         break;
       default:
         sales = await _repo.getAllSales(limit: 200);
@@ -130,6 +139,39 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     }
   }
 
+  Future<void> _pickDateRange() async {
+    final now   = DateTime.now();
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate:  now,
+      initialDateRange: DateTimeRange(
+        start: _customFrom ?? now.subtract(const Duration(days: 7)),
+        end:   _customTo   ?? now,
+      ),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.light(
+            primary:    AppColors.teal600,
+            onPrimary:  Colors.white,
+            onSurface:  Colors.black87,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+
+    if (range != null) {
+      setState(() {
+        _customFrom = range.start;
+        _customTo   = range.end;
+        _period     = 'Custom Date Range';
+        _page       = 1;
+      });
+      _loadData();
+    }
+  }
+
   String _getUsername() {
     final home = Platform.environment['USERPROFILE'] ??
         Platform.environment['HOME'] ?? '';
@@ -139,14 +181,24 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   void _applyFilters() {
     _filtered = _allSales.where((t) {
       final q           = _search.toLowerCase();
+      final dateStr     = '${t.createdAt.year}-'
+          '${t.createdAt.month.toString().padLeft(2,'0')}-'
+          '${t.createdAt.day.toString().padLeft(2,'0')}';
       final matchSearch = _search.isEmpty ||
           t.invoiceId.toLowerCase().contains(q) ||
-          t.customer.toLowerCase().contains(q);
+          t.customer.toLowerCase().contains(q) ||
+          t.paymentMethod.name.toLowerCase().contains(q) ||
+          t.status.name.toLowerCase().contains(q) ||
+          t.total.toString().contains(q) ||
+          dateStr.contains(q);
       final matchMethod = _method == 'All Payment Methods' ||
           (_method == 'Cash' && t.paymentMethod == PaymentMethod.cash) ||
           (_method == 'UPI'  && t.paymentMethod == PaymentMethod.upi)  ||
           (_method == 'Card' && t.paymentMethod == PaymentMethod.card);
-      return matchSearch && matchMethod;
+      final matchDate = _customFrom == null || _customTo == null ? true :
+      t.createdAt.isAfter(_customFrom!.subtract(const Duration(seconds: 1))) &&
+          t.createdAt.isBefore(_customTo!.add(const Duration(days: 1)));
+      return matchSearch && matchMethod && matchDate;
     }).toList();
   }
 
@@ -286,10 +338,19 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         _DDFilter(
           value: _period,
           items: const [
-            'Today', 'Yesterday', 'Last 7 Days', 'Last 30 Days', 'All Time'
+            'Today', 'Yesterday', 'Last 7 Days', 'Last 30 Days', 'All Time', 'Custom Date Range'
           ],
-          onChanged: (v) {
-            setState(() { _period = v ?? _period; _page = 1; });
+          onChanged: (v) async {
+            if (v == 'Custom Date Range') {
+              await _pickDateRange();
+              return;
+            }
+            setState(() {
+              _period     = v ?? _period;
+              _customFrom = null;
+              _customTo   = null;
+              _page       = 1;
+            });
             _loadData();
           },
           c: c,
@@ -308,6 +369,40 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           c: c,
           width: 190,
         ),
+        if (_period == 'Custom Date Range' && _customFrom != null && _customTo != null) ...[
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.teal50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.teal100),
+            ),
+            child: Row(children: [
+              const Icon(Icons.date_range, size: 14, color: AppColors.teal600),
+              const SizedBox(width: 6),
+              Text(
+                '${_customFrom!.day}/${_customFrom!.month}/${_customFrom!.year}'
+                    '  to  '
+                    '${_customTo!.day}/${_customTo!.month}/${_customTo!.year}',
+                style: const TextStyle(fontSize: 12,
+                    fontWeight: FontWeight.w600, color: AppColors.teal700),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _customFrom = null;
+                    _customTo   = null;
+                    _period     = 'Today';
+                  });
+                  _loadData();
+                },
+                child: const Icon(Icons.close, size: 14, color: AppColors.teal600),
+              ),
+            ]),
+          ),
+        ],
       ]),
     );
   }
