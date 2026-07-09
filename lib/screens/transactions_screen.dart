@@ -3,6 +3,7 @@ import '../core/theme.dart';
 import '../core/app_colors_ext.dart';
 import '../repositories/sales_repository.dart';
 import '../models/sale_model.dart';
+import 'dart:io';
 
 /// ─────────────────────────────────────────────────────────────
 ///  TRANSACTIONS SCREEN  –  lib/screens/transactions_screen.dart
@@ -62,6 +63,77 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       _applyFilters();
       _loading  = false;
     });
+  }
+
+  Future<void> _exportCsv() async {
+    if (_filtered.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('No transactions to export'),
+        backgroundColor: AppColors.orange700,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ));
+      return;
+    }
+
+    // Build CSV string
+    final buffer = StringBuffer();
+    // Header row
+    buffer.writeln('Invoice ID,Date,Time,Customer,Payment Method,Subtotal,Discount %,Tax,Total,Status');
+
+    for (final tx in _filtered) {
+      final dt   = tx.createdAt;
+      final date = '${dt.year}-${dt.month.toString().padLeft(2,'0')}-${dt.day.toString().padLeft(2,'0')}';
+      final h    = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
+      final amPm = dt.hour >= 12 ? 'PM' : 'AM';
+      final time = '$h:${dt.minute.toString().padLeft(2,'0')} $amPm';
+
+      buffer.writeln(
+        '${tx.invoiceId},'
+            '$date,'
+            '$time,'
+            '"${tx.customer}",'
+            '${tx.paymentMethod.name},'
+            '${tx.subtotal.toStringAsFixed(2)},'
+            '${tx.discount},'
+            '${tx.tax.toStringAsFixed(2)},'
+            '${tx.total.toStringAsFixed(2)},'
+            '${tx.status.name}',
+      );
+    }
+
+    // Save file to Downloads
+    try {
+      final downloadsPath = 'C:/Users/${_getUsername()}/Downloads';
+      final fileName = 'transactions_${DateTime.now().millisecondsSinceEpoch}.csv';
+      final file = File('$downloadsPath/$fileName');
+      await file.writeAsString(buffer.toString());
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Exported: $fileName'),
+          backgroundColor: AppColors.teal600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Export failed: $e'),
+          backgroundColor: AppColors.red500,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ));
+      }
+    }
+  }
+
+  String _getUsername() {
+    final home = Platform.environment['USERPROFILE'] ??
+        Platform.environment['HOME'] ?? '';
+    return home.split(Platform.pathSeparator).last;
   }
 
   void _applyFilters() {
@@ -162,7 +234,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         ),
         const SizedBox(width: 8),
         OutlinedButton.icon(
-          onPressed: () {},
+          onPressed: _exportCsv,
           icon: const Icon(Icons.download_outlined, size: 16),
           label: const Text('Export CSV'),
           style: OutlinedButton.styleFrom(
