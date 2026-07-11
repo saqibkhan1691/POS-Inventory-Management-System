@@ -72,7 +72,7 @@ class _AppShellState extends State<AppShell> {
       case AppRoutes.addProduct:   return const AddProductScreen();
       case AppRoutes.payment:      return const PaymentScreen();
       case AppRoutes.transactions: return const TransactionsScreen();
-      case AppRoutes.settings:     return const SettingsScreen();
+      case AppRoutes.settings:     return const SettingsScreen(userId: 'default');
       default:
         return const Center(
           child: Text('Coming soon…',
