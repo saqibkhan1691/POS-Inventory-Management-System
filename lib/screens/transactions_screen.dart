@@ -494,11 +494,160 @@ class _TransactionRow extends StatefulWidget {
         required this.itemCount,
         required this.onRefund});
   @override
-  State<_TransactionRow> createState() => _TransactionRowState();
+  State<_TransactionRow> createState() => _TransactionRowState(
+
+  );
+
 }
 
 class _TransactionRowState extends State<_TransactionRow> {
   bool _hov = false;
+
+  void _showDetails(BuildContext context, SaleModel tx) {
+    final c = context.colors;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: c.cardBg,
+        title: Row(children: [
+          const Icon(Icons.receipt_long_outlined,
+              color: AppColors.teal600, size: 20),
+          const SizedBox(width: 8),
+          Text(tx.invoiceId,
+              style: TextStyle(color: c.textPrimary,
+                  fontWeight: FontWeight.w700, fontSize: 16)),
+        ]),
+        content: SizedBox(
+          width: 400,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            _detailRow('Customer',  tx.customer,                       c),
+            _detailRow('Date',      tx.createdAt.toString().substring(0, 16), c),
+            _detailRow('Payment',   tx.paymentMethod.name.toUpperCase(), c),
+            _detailRow('Subtotal',  '₹${tx.subtotal.toStringAsFixed(2)}', c),
+            _detailRow('Discount',  '${tx.discount}%',                 c),
+            _detailRow('Tax',       '₹${tx.tax.toStringAsFixed(2)}',   c),
+            Divider(color: c.border),
+            _detailRow('Total',     '₹${tx.total.toStringAsFixed(2)}', c,
+                bold: true),
+            _detailRow('Status',    tx.status.name.toUpperCase(),       c),
+          ]),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _printReceipt(context, tx);
+            },
+            icon: const Icon(Icons.print_outlined, size: 16),
+            label: const Text('Print'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.teal600,
+              foregroundColor: AppColors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+              elevation: 0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value, AdaptiveColors c,
+      {bool bold = false}) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(children: [
+          Expanded(child: Text(label,
+              style: TextStyle(fontSize: 13, color: c.textMuted))),
+          Text(value, style: TextStyle(
+              fontSize: 13, fontWeight:
+          bold ? FontWeight.w800 : FontWeight.w600,
+              color: bold ? AppColors.teal600 : c.textPrimary)),
+        ]),
+      );
+
+  void _printReceipt(BuildContext context, SaleModel tx) {
+    // Receipt content
+    final lines = [
+      '================================',
+      '        SHREE SAREES POS        ',
+      '================================',
+      'Invoice : ${tx.invoiceId}',
+      'Date    : ${tx.createdAt.toString().substring(0, 16)}',
+      'Customer: ${tx.customer}',
+      '--------------------------------',
+      'Subtotal: ₹${tx.subtotal.toStringAsFixed(2)}',
+      'Discount: ${tx.discount}%',
+      'Tax     : ₹${tx.tax.toStringAsFixed(2)}',
+      '--------------------------------',
+      'TOTAL   : ₹${tx.total.toStringAsFixed(2)}',
+      'Payment : ${tx.paymentMethod.name.toUpperCase()}',
+      '================================',
+      '     Thank you for shopping!    ',
+      '================================',
+    ].join('\n');
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        final c = context.colors;
+        return AlertDialog(
+          backgroundColor: c.cardBg,
+          title: Row(children: [
+            const Icon(Icons.print_outlined,
+                color: AppColors.teal600, size: 20),
+            const SizedBox(width: 8),
+            Text('Print Receipt', style: TextStyle(
+                color: c.textPrimary, fontWeight: FontWeight.w700)),
+          ]),
+          content: Container(
+            width: 320,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: c.inputFill,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: c.border),
+            ),
+            child: Text(lines, style: const TextStyle(
+                fontFamily: 'monospace', fontSize: 13)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: const Text('Sent to printer'),
+                  backgroundColor: AppColors.teal600,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                  duration: const Duration(seconds: 2),
+                ));
+              },
+              icon: const Icon(Icons.print_outlined, size: 16),
+              label: const Text('Print Now'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.teal600,
+                foregroundColor: AppColors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+                elevation: 0,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -569,10 +718,10 @@ class _TransactionRowState extends State<_TransactionRow> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       _IBtn(Icons.visibility_outlined, 'View',
-                          context.colors.textSub, () {}),
+                          context.colors.textSub, () => _showDetails(context, widget.tx)),
                       const SizedBox(width: 4),
                       _IBtn(Icons.print_outlined, 'Print',
-                          context.colors.textSub, () {}),
+                          context.colors.textSub, () => _printReceipt(context, widget.tx)),
                       if (widget.tx.status != SaleStatus.refunded) ...[
                         const SizedBox(width: 4),
                         _IBtn(Icons.undo_outlined, 'Refund',
