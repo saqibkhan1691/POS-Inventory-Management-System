@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:barcode_widget/barcode_widget.dart';
+import 'package:barcode/barcode.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import '../core/theme.dart';
 import '../widgets/product_tile.dart';
 import '../core/app_colors_ext.dart';
@@ -331,6 +336,128 @@ class _EditProductDialogState extends State<_EditProductDialog> {
   late final _alertCtrl = TextEditingController(text: widget.product.alertQty.toString());
   bool _saving = false;
 
+  void _showBarcodePopup(BuildContext context, ProductModel product) {
+    final c = context.colors;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: c.cardBg,
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Barcode — ${product.name}',
+                style: TextStyle(color: c.textPrimary,
+                    fontWeight: FontWeight.w700, fontSize: 15)),
+            // Red X close button
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx),
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: AppColors.red500,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Icon(Icons.close, color: AppColors.white, size: 16),
+              ),
+            ),
+          ],
+        ),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          // Barcode image
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.gray200),
+            ),
+            child: Column(children: [
+              BarcodeWidget(
+                barcode: Barcode.code128(),
+                data: product.barcode,
+                width: 280,
+                height: 90,
+                color: Colors.black,
+              ),
+              const SizedBox(height: 8),
+              Text(product.barcode,
+                  style: const TextStyle(fontSize: 16,
+                      fontFamily: 'monospace', fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text(product.name,
+                  style: const TextStyle(fontSize: 12, color: AppColors.gray500)),
+            ]),
+          ),
+          const SizedBox(height: 16),
+          // Download PDF button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _downloadBarcodePdf(ctx, product),
+              icon: const Icon(Icons.download_outlined, size: 18),
+              label: const Text('Download PDF'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.teal600,
+                foregroundColor: AppColors.white,
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+                elevation: 0,
+                textStyle: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _downloadBarcodePdf(
+      BuildContext context, ProductModel product) async {
+    final pdf = pw.Document();
+
+    // SVG se barcode generate karo directly
+    final barcodeSvg = Barcode.code128().toSvg(
+      product.barcode,
+      width: 200,
+      height: 70,
+    );
+
+    pdf.addPage(pw.Page(
+      pageFormat: PdfPageFormat.a6,
+      build: (pw.Context ctx) => pw.Center(
+        child: pw.Column(
+          mainAxisAlignment: pw.MainAxisAlignment.center,
+          children: [
+            pw.Text('SHREE SAREES',
+                style: pw.TextStyle(
+                    fontSize: 16, fontWeight: pw.FontWeight.bold)),
+            pw.SizedBox(height: 20),
+            // SVG barcode PDF mein render karo
+            pw.SvgImage(svg: barcodeSvg, width: 200, height: 70),
+            pw.SizedBox(height: 10),
+            pw.Text(product.barcode,
+                style: pw.TextStyle(
+                    fontSize: 14, fontWeight: pw.FontWeight.bold)),
+            pw.SizedBox(height: 4),
+            pw.Text(product.name,
+                style: const pw.TextStyle(fontSize: 10)),
+            pw.SizedBox(height: 4),
+            pw.Text('Rs. ${product.sellingPrice.toStringAsFixed(2)}',
+                style: pw.TextStyle(
+                    fontSize: 12, fontWeight: pw.FontWeight.bold)),
+          ],
+        ),
+      ),
+    ));
+
+    await Printing.sharePdf(
+      bytes: await pdf.save(),
+      filename: '${product.name}_${product.barcode}.pdf',
+    );
+  }
+
   @override
   void dispose() {
     _nameCtrl.dispose(); _priceCtrl.dispose(); _purchCtrl.dispose();
@@ -367,6 +494,16 @@ class _EditProductDialogState extends State<_EditProductDialog> {
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: Text('Cancel', style: TextStyle(color: c.textSecond)),
+        ),
+        OutlinedButton.icon(
+          onPressed: () => _showBarcodePopup(context, widget.product),
+          icon: const Icon(Icons.qr_code_outlined, size: 16),
+          label: const Text('View Barcode'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.teal600,
+            side: const BorderSide(color: AppColors.teal600),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
         ),
         ElevatedButton(
           onPressed: _saving ? null : _save,

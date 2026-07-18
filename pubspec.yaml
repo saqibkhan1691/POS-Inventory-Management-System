@@ -33,6 +33,11 @@ dependencies:
   sqflite: ^2.3.3+1
   path: ^1.9.0
 
+  barcode_widget: ^2.0.3
+  barcode: ^2.2.5
+  pdf: ^3.10.7
+  printing: ^5.12.0
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
