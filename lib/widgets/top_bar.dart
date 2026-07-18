@@ -13,6 +13,7 @@ class AppTopBar extends StatefulWidget implements PreferredSizeWidget {
 
 class _AppTopBarState extends State<AppTopBar> {
   late String _timeStr;
+  final _searchCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -23,6 +24,12 @@ class _AppTopBarState extends State<AppTopBar> {
       if (mounted) setState(_updateTime);
       return mounted;
     });
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   void _updateTime() {
@@ -56,7 +63,11 @@ class _AppTopBarState extends State<AppTopBar> {
               child: SizedBox(
                 height: 38,
                 child: TextField(
-                  onSubmitted: (v) => widget.onSearch?.call(v.trim()),
+                  controller: _searchCtrl,
+                  onSubmitted: (v) {
+                    widget.onSearch?.call(v.trim());
+                    _searchCtrl.clear(); // search ke baad field clear ho
+                  },
                   textInputAction: TextInputAction.search,
                   decoration: InputDecoration(
                     hintText: 'Search products, bills (F3)…',

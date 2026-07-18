@@ -17,10 +17,10 @@ import '../models/sale_model.dart';
 class BillingScreen extends StatefulWidget {
   const BillingScreen({super.key});
   @override
-  State<BillingScreen> createState() => _BillingScreenState();
+  State<BillingScreen> createState() => BillingScreenState();
 }
 
-class _BillingScreenState extends State<BillingScreen> {
+class BillingScreenState extends State<BillingScreen> {
   final _productRepo = ProductRepository();
   final _salesRepo   = SalesRepository();
   final _barcodeKey  = GlobalKey<BarcodeInputState>();
@@ -32,6 +32,11 @@ class _BillingScreenState extends State<BillingScreen> {
   // ── Live search (used by BarcodeInput suggestions) ────────
   Future<List<ProductModel>> _onSearch(String query) =>
       _productRepo.search(query);
+
+  // Top search bar se call hoga
+  void searchProduct(String query) {
+    _onBarcode(query);
+  }
 
   // ── Add a product to cart, with stock checks ──────────────
   void _addProductToCart(ProductModel product) {

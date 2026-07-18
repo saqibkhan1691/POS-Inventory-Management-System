@@ -55,6 +55,7 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
+  final _billingKey = GlobalKey<BillingScreenState>();
   String _route = AppRoutes.billing;
 
   void _go(String route) {
@@ -67,7 +68,7 @@ class _AppShellState extends State<AppShell> {
 
   Widget _page() {
     switch (_route) {
-      case AppRoutes.billing:      return const BillingScreen();
+      case AppRoutes.billing:      return BillingScreen(key: _billingKey);
       case AppRoutes.inventory:    return const InventoryScreen();
       case AppRoutes.addProduct:   return const AddProductScreen();
       case AppRoutes.payment:      return const PaymentScreen();
@@ -98,11 +99,15 @@ class _AppShellState extends State<AppShell> {
                 AppTopBar(
                   onSearch: (query) {
                     if (query.isEmpty) return;
-                    setState(() => _route = AppRoutes.billing);
-                    // BarcodeInput ko query pass karo after frame
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      _barcodeKey.currentState?.simulateSearch(query);
-                    });
+                    if (_route != AppRoutes.billing) {
+                      setState(() => _route = AppRoutes.billing);
+                      // Billing screen build hone ke baad search trigger karo
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        _billingKey.currentState?.searchProduct(query);
+                      });
+                    } else {
+                      _billingKey.currentState?.searchProduct(query);
+                    }
                   },
                 ),
                 Expanded(
