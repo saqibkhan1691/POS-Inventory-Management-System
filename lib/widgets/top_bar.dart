@@ -3,7 +3,8 @@ import '../core/theme.dart';
 import '../core/app_colors_ext.dart';
 
 class AppTopBar extends StatefulWidget implements PreferredSizeWidget {
-  const AppTopBar({super.key});
+  final ValueChanged<String>? onSearch;
+  const AppTopBar({super.key, this.onSearch});
   @override
   Size get preferredSize => const Size.fromHeight(64);
   @override
@@ -55,6 +56,8 @@ class _AppTopBarState extends State<AppTopBar> {
               child: SizedBox(
                 height: 38,
                 child: TextField(
+                  onSubmitted: (v) => widget.onSearch?.call(v.trim()),
+                  textInputAction: TextInputAction.search,
                   decoration: InputDecoration(
                     hintText: 'Search products, bills (F3)…',
                     prefixIcon: Icon(Icons.search, size: 18, color: c.textMuted),

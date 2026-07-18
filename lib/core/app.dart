@@ -95,7 +95,16 @@ class _AppShellState extends State<AppShell> {
           Expanded(
             child: Column(
               children: [
-                const AppTopBar(),
+                AppTopBar(
+                  onSearch: (query) {
+                    if (query.isEmpty) return;
+                    setState(() => _route = AppRoutes.billing);
+                    // BarcodeInput ko query pass karo after frame
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      _barcodeKey.currentState?.simulateSearch(query);
+                    });
+                  },
+                ),
                 Expanded(
                   child: Container(
                     color: cs.background,
