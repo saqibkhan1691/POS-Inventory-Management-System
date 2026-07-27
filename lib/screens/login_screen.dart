@@ -1,23 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/theme.dart';
 import '../core/app_colors_ext.dart';
 
 /// ─────────────────────────────────────────────────────────────
-///  LOGIN SCREEN v2  –  lib/screens/login_screen.dart
-///  Firebase Auth — Email/Password + Phone OTP
-///  Features:
-///    - Login (email + password) with Remember Me
-///    - Register (name, email, phone, password, confirm password)
-///    - Phone OTP verification on register
-///    - Forgot Password (email reset)
-///    - Login button disabled until user types something
-///    - Last login info stored in Firebase Auth
+///  LOGIN SCREEN v3  –  lib/screens/login_screen.dart
+///
+///  Fixes:
+///  1. Email verification — user must verify email before login
+///  2. Phone uniqueness — checked in Firestore before register
+///  3. Per-user isolated system — userId passed to AppShell
+///  4. No phone OTP on Windows — email OTP used instead
+///  5. Button loading fixed — proper state management
+///  6. Already registered email → clear error
 /// ─────────────────────────────────────────────────────────────
 
-enum _Mode { login, register, forgotPassword, otpVerify }
+enum _Mode { login, register, forgotPassword, verifyEmail }
 
 class LoginScreen extends StatefulWidget {
   final VoidCallback onLoginSuccess;
@@ -27,32 +28,30 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _auth    = FirebaseAuth.instance;
-  final _formKey = GlobalKey<FormState>();
+  final _auth      = FirebaseAuth.instance;
+  final _firestore = FirebaseFirestore.instance;
+  final _formKey   = GlobalKey<FormState>();
 
-  // Controllers
   final _nameCtrl    = TextEditingController();
   final _emailCtrl   = TextEditingController();
   final _phoneCtrl   = TextEditingController();
   final _passCtrl    = TextEditingController();
   final _confirmCtrl = TextEditingController();
-  final _otpCtrl     = TextEditingController();
-  final _resetCtrl   = TextEditingController(); // forgot password email
+  final _resetCtrl   = TextEditingController();
 
   _Mode  _mode       = _Mode.login;
   bool   _loading    = false;
   bool   _obscureP   = true;
   bool   _obscureC   = true;
   bool   _rememberMe = false;
-  bool   _hasInput   = false; // login button enabler
+  bool   _hasInput   = false;
   String? _error;
-  String? _verificationId; // for phone OTP
+  String? _infoMsg;
 
   @override
   void initState() {
     super.initState();
     _loadRememberMe();
-    // Listen to any field change to enable login button
     _emailCtrl.addListener(_checkInput);
     _passCtrl.addListener(_checkInput);
   }
@@ -66,11 +65,8 @@ class _LoginScreenState extends State<LoginScreen> {
     final prefs = await SharedPreferences.getInstance();
     final remembered = prefs.getBool('remember_me') ?? false;
     final savedEmail = prefs.getString('saved_email') ?? '';
-    if (remembered && savedEmail.isNotEmpty) {
-      setState(() {
-        _rememberMe = true;
-        _emailCtrl.text = savedEmail;
-      });
+    if (remembered && savedEmail.isNotEmpty && mounted) {
+      setState(() { _rememberMe = true; _emailCtrl.text = savedEmail; });
     }
   }
 
@@ -87,22 +83,32 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    for (final c in [_nameCtrl, _emailCtrl, _phoneCtrl, _passCtrl,
-      _confirmCtrl, _otpCtrl, _resetCtrl]) {
-      c.dispose();
-    }
+    for (final c in [_nameCtrl, _emailCtrl, _phoneCtrl,
+      _passCtrl, _confirmCtrl, _resetCtrl]) c.dispose();
     super.dispose();
   }
 
   // ── LOGIN ─────────────────────────────────────────────────
   Future<void> _login() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    setState(() { _loading = true; _error = null; });
+    setState(() { _loading = true; _error = null; _infoMsg = null; });
     try {
-      await _auth.signInWithEmailAndPassword(
+      final cred = await _auth.signInWithEmailAndPassword(
         email:    _emailCtrl.text.trim(),
         password: _passCtrl.text.trim(),
       );
+
+      // Check email verified
+      if (!(cred.user?.emailVerified ?? false)) {
+        await _auth.signOut();
+        setState(() {
+          _error = null;
+          _infoMsg = 'Please verify your email first. Check your inbox.';
+          _mode = _Mode.verifyEmail;
+        });
+        return;
+      }
+
       await _saveRememberMe();
       if (mounted) widget.onLoginSuccess();
     } on FirebaseAuthException catch (e) {
@@ -112,76 +118,94 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ── REGISTER — Step 1: create account ────────────────────
+  // ── REGISTER ──────────────────────────────────────────────
   Future<void> _register() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    setState(() { _loading = true; _error = null; });
+    setState(() { _loading = true; _error = null; _infoMsg = null; });
+
     try {
+      final phone = _phoneCtrl.text.trim();
+
+      // Check if phone already registered
+      final phoneQuery = await _firestore
+          .collection('users')
+          .where('phone', isEqualTo: phone)
+          .limit(1)
+          .get();
+
+      if (phoneQuery.docs.isNotEmpty) {
+        setState(() => _error = 'This mobile number is already registered.');
+        return;
+      }
+
       // Create Firebase Auth user
       final cred = await _auth.createUserWithEmailAndPassword(
         email:    _emailCtrl.text.trim(),
         password: _passCtrl.text.trim(),
       );
-      // Save display name
+
+      // Update display name
       await cred.user?.updateDisplayName(_nameCtrl.text.trim());
 
-      // Send phone OTP
-      await _sendOtp();
-    } on FirebaseAuthException catch (e) {
-      setState(() { _error = _err(e.code); _loading = false; });
-    }
-  }
+      // Save user profile to Firestore
+      await _firestore.collection('users').doc(cred.user!.uid).set({
+        'uid':        cred.user!.uid,
+        'name':       _nameCtrl.text.trim(),
+        'email':      _emailCtrl.text.trim(),
+        'phone':      phone,
+        'role':       'cashier',
+        'createdAt':  FieldValue.serverTimestamp(),
+        'lastLogin':  FieldValue.serverTimestamp(),
+        'device':     'Windows Desktop',
+        'isActive':   true,
+      });
 
-  // ── PHONE OTP — send ─────────────────────────────────────
-  Future<void> _sendOtp() async {
-    final phone = '+91${_phoneCtrl.text.trim()}'; // India default
-    await _auth.verifyPhoneNumber(
-      phoneNumber: phone,
-      verificationCompleted: (PhoneAuthCredential cred) async {
-        // Auto-verify on some Android devices
-        await _auth.currentUser?.linkWithCredential(cred);
-        if (mounted) {
-          _showSnack('Phone verified automatically!', AppColors.teal600);
-          widget.onLoginSuccess();
-        }
-      },
-      verificationFailed: (FirebaseAuthException e) {
-        setState(() {
-          _error   = 'Phone verification failed: ${e.message}';
-          _loading = false;
-        });
-      },
-      codeSent: (String verificationId, int? resendToken) {
-        setState(() {
-          _verificationId = verificationId;
-          _mode           = _Mode.otpVerify;
-          _loading        = false;
-        });
-      },
-      codeAutoRetrievalTimeout: (_) {},
-      timeout: const Duration(seconds: 60),
-    );
-  }
+      // Send email verification
+      await cred.user?.sendEmailVerification();
 
-  // ── PHONE OTP — verify ────────────────────────────────────
-  Future<void> _verifyOtp() async {
-    if (_otpCtrl.text.trim().length != 6) {
-      setState(() => _error = 'Please enter the 6-digit OTP');
-      return;
-    }
-    setState(() { _loading = true; _error = null; });
-    try {
-      final cred = PhoneAuthProvider.credential(
-        verificationId: _verificationId!,
-        smsCode:        _otpCtrl.text.trim(),
-      );
-      await _auth.currentUser?.linkWithCredential(cred);
-      if (mounted) {
-        _showSnack('Account created successfully!', AppColors.teal600);
-        widget.onLoginSuccess();
-      }
+      setState(() {
+        _mode    = _Mode.verifyEmail;
+        _infoMsg = 'A verification email has been sent to ${_emailCtrl.text.trim()}. '
+            'Please verify your email before logging in.';
+      });
     } on FirebaseAuthException catch (e) {
       setState(() => _error = _err(e.code));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // ── CHECK VERIFICATION STATUS ─────────────────────────────
+  Future<void> _checkVerification() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      await _auth.currentUser?.reload();
+      final user = _auth.currentUser;
+      if (user?.emailVerified ?? false) {
+        // Update lastLogin in Firestore
+        await _firestore.collection('users').doc(user!.uid).update({
+          'lastLogin': FieldValue.serverTimestamp(),
+        });
+        if (mounted) {
+          _showSnack('Email verified! You can now login.', AppColors.teal600);
+          setState(() { _mode = _Mode.login; _infoMsg = null; });
+        }
+      } else {
+        setState(() => _error = 'Email not verified yet. Please check your inbox.');
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // ── RESEND VERIFICATION EMAIL ─────────────────────────────
+  Future<void> _resendVerification() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      await _auth.currentUser?.sendEmailVerification();
+      _showSnack('Verification email resent!', AppColors.teal600);
+    } catch (e) {
+      setState(() => _error = 'Could not resend email. Try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -193,12 +217,16 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _error = 'Please enter your email address');
       return;
     }
+    if (!_resetCtrl.text.contains('@')) {
+      setState(() => _error = 'Please enter a valid email address');
+      return;
+    }
     setState(() { _loading = true; _error = null; });
     try {
       await _auth.sendPasswordResetEmail(email: _resetCtrl.text.trim());
       if (mounted) {
-        _showSnack('Password reset email sent!', AppColors.teal600);
-        setState(() => _mode = _Mode.login);
+        _showSnack('Password reset email sent! Check your inbox.', AppColors.teal600);
+        setState(() { _mode = _Mode.login; _error = null; });
       }
     } on FirebaseAuthException catch (e) {
       setState(() => _error = _err(e.code));
@@ -218,16 +246,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
   String _err(String code) {
     switch (code) {
-      case 'user-not-found':        return 'No account found with this email.';
-      case 'wrong-password':        return 'Incorrect password.';
-      case 'invalid-credential':    return 'Invalid email or password.';
-      case 'invalid-email':         return 'Please enter a valid email.';
-      case 'email-already-in-use':  return 'This email is already registered.';
-      case 'weak-password':         return 'Password must be at least 6 characters.';
-      case 'too-many-requests':     return 'Too many attempts. Try again later.';
-      case 'network-request-failed':return 'No internet connection.';
-      case 'invalid-verification-code': return 'Wrong OTP. Please try again.';
-      case 'credential-already-in-use': return 'This phone number is already linked.';
+      case 'user-not-found':         return 'No account found with this email.';
+      case 'wrong-password':         return 'Incorrect password.';
+      case 'invalid-credential':     return 'Invalid email or password.';
+      case 'invalid-email':          return 'Please enter a valid email address.';
+      case 'email-already-in-use':   return 'This email is already registered. Please login.';
+      case 'weak-password':          return 'Password must be at least 6 characters.';
+      case 'too-many-requests':      return 'Too many attempts. Try again later.';
+      case 'network-request-failed': return 'No internet connection.';
       default: return 'Something went wrong. Please try again.';
     }
   }
@@ -278,14 +304,14 @@ class _LoginScreenState extends State<LoginScreen> {
                 clipBehavior: Clip.antiAlias,
                 child: Column(children: [
                   Container(height: 4, decoration: const BoxDecoration(
-                      gradient: LinearGradient(colors: [AppColors.teal600, AppColors.teal700]))),
+                      gradient: LinearGradient(
+                          colors: [AppColors.teal600, AppColors.teal700]))),
                   Padding(
                     padding: const EdgeInsets.all(32),
                     child: _buildContent(),
                   ),
                 ]),
               ),
-
               const SizedBox(height: 28),
               const Text('Version 2.4.1  •  Shree Sarees POS',
                   style: TextStyle(color: AppColors.slate500, fontSize: 12)),
@@ -298,235 +324,199 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Widget _buildContent() {
     switch (_mode) {
-      case _Mode.login:         return _buildLogin();
-      case _Mode.register:      return _buildRegister();
-      case _Mode.forgotPassword:return _buildForgotPassword();
-      case _Mode.otpVerify:     return _buildOtpVerify();
+      case _Mode.login:          return _buildLogin();
+      case _Mode.register:       return _buildRegister();
+      case _Mode.forgotPassword: return _buildForgotPassword();
+      case _Mode.verifyEmail:    return _buildVerifyEmail();
     }
   }
 
-  // ── LOGIN FORM ────────────────────────────────────────────
-  Widget _buildLogin() {
-    return Form(
-      key: _formKey,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _title(Icons.lock_outline, 'Secure Login', 'Sign in to your account'),
-        const SizedBox(height: 24),
-
-        _label('Email Address'),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: _emailCtrl,
-          keyboardType: TextInputType.emailAddress,
-          textInputAction: TextInputAction.next,
-          decoration: _deco('Enter your email', Icons.email_outlined),
-          validator: (v) {
-            if (v?.trim().isEmpty ?? true) return 'Please enter email';
-            if (!v!.contains('@')) return 'Enter a valid email';
-            return null;
-          },
+  // ── LOGIN ─────────────────────────────────────────────────
+  Widget _buildLogin() => Form(
+    key: _formKey,
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _title(Icons.lock_outline, 'Secure Login', 'Sign in to your account'),
+      const SizedBox(height: 24),
+      _label('Email Address'),
+      const SizedBox(height: 6),
+      TextFormField(
+        controller: _emailCtrl,
+        keyboardType: TextInputType.emailAddress,
+        textInputAction: TextInputAction.next,
+        decoration: _deco('Enter your email', Icons.email_outlined),
+        validator: (v) {
+          if (v?.trim().isEmpty ?? true) return 'Please enter email';
+          if (!RegExp(r'^[\w-.]+@([\w-]+\.)+[\w]{2,4}$').hasMatch(v!.trim()))
+            return 'Enter a valid email address';
+          return null;
+        },
+      ),
+      const SizedBox(height: 16),
+      _label('Password'),
+      const SizedBox(height: 6),
+      TextFormField(
+        controller: _passCtrl,
+        obscureText: _obscureP,
+        textInputAction: TextInputAction.done,
+        onFieldSubmitted: (_) { if (_hasInput && !_loading) _login(); },
+        decoration: _deco('Enter your password', Icons.lock_outline).copyWith(
+          suffixIcon: _eyeBtn(_obscureP, () =>
+              setState(() => _obscureP = !_obscureP)),
         ),
-        const SizedBox(height: 16),
-
-        _label('Password'),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: _passCtrl,
-          obscureText: _obscureP,
-          textInputAction: TextInputAction.done,
-          onFieldSubmitted: (_) { if (_hasInput) _login(); },
-          decoration: _deco('Enter your password', Icons.lock_outline).copyWith(
-            suffixIcon: _eyeBtn(_obscureP, () =>
-                setState(() => _obscureP = !_obscureP)),
-          ),
-          validator: (v) {
-            if (v?.isEmpty ?? true) return 'Please enter password';
-            return null;
-          },
-        ),
-        const SizedBox(height: 14),
-
-        // Remember me
-        Row(children: [
-          SizedBox(width: 20, height: 20,
-            child: Checkbox(
-              value: _rememberMe,
-              onChanged: (v) => setState(() => _rememberMe = v ?? false),
-              activeColor: AppColors.teal600,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          ),
-          const SizedBox(width: 8),
-          const Text('Remember me', style: TextStyle(fontSize: 13, color: AppColors.gray600)),
-          const Spacer(),
-          GestureDetector(
-            onTap: () => setState(() { _mode = _Mode.forgotPassword; _error = null; }),
-            child: const Text('Forgot Password?',
-                style: TextStyle(fontSize: 13, color: AppColors.teal600,
-                    fontWeight: FontWeight.w600)),
-          ),
-        ]),
-
-        if (_error != null) _errorBox(_error!),
-        const SizedBox(height: 22),
-
-        // Login button — disabled until user types
-        SizedBox(width: double.infinity, height: 50,
-          child: ElevatedButton(
-            onPressed: _hasInput && !_loading ? _login : null,
-            style: _btnStyle(),
-            child: _loading
-                ? _spinner()
-                : const Text('Login', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        Center(child: _toggleText(
-          "Don't have an account? ",
-          'Register',
-              () => setState(() { _mode = _Mode.register; _error = null; _formKey.currentState?.reset(); }),
+        validator: (v) =>
+        (v?.isEmpty ?? true) ? 'Please enter password' : null,
+      ),
+      const SizedBox(height: 14),
+      Row(children: [
+        SizedBox(width: 20, height: 20, child: Checkbox(
+          value: _rememberMe,
+          onChanged: (v) => setState(() => _rememberMe = v ?? false),
+          activeColor: AppColors.teal600,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         )),
+        const SizedBox(width: 8),
+        const Text('Remember me',
+            style: TextStyle(fontSize: 13, color: AppColors.gray600)),
+        const Spacer(),
+        GestureDetector(
+          onTap: () => setState(() { _mode = _Mode.forgotPassword; _error = null; }),
+          child: const Text('Forgot Password?',
+              style: TextStyle(fontSize: 13, color: AppColors.teal600,
+                  fontWeight: FontWeight.w600)),
+        ),
       ]),
-    );
-  }
-
-  // ── REGISTER FORM ─────────────────────────────────────────
-  Widget _buildRegister() {
-    return Form(
-      key: _formKey,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _title(Icons.person_add_outlined, 'Create Account',
-            'Register to access the POS system'),
-        const SizedBox(height: 24),
-
-        _label('Full Name'),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: _nameCtrl,
-          textInputAction: TextInputAction.next,
-          decoration: _deco('Enter your full name', Icons.person_outline),
-          validator: (v) => (v?.trim().isEmpty ?? true) ? 'Please enter your name' : null,
+      if (_error != null) _errorBox(_error!),
+      const SizedBox(height: 22),
+      SizedBox(width: double.infinity, height: 50,
+        child: ElevatedButton(
+          // Disabled until user types something
+          onPressed: _hasInput && !_loading ? _login : null,
+          style: _btnStyle(),
+          child: _loading ? _spinner()
+              : const Text('Login',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
         ),
-        const SizedBox(height: 14),
+      ),
+      const SizedBox(height: 16),
+      Center(child: _toggleText("Don't have an account? ", 'Register',
+              () => setState(() {
+            _mode = _Mode.register;
+            _error = null;
+            _formKey.currentState?.reset();
+          }))),
+    ]),
+  );
 
-        _label('Email Address'),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: _emailCtrl,
-          keyboardType: TextInputType.emailAddress,
-          textInputAction: TextInputAction.next,
-          decoration: _deco('Enter your email', Icons.email_outlined),
-          validator: (v) {
-            if (v?.trim().isEmpty ?? true) return 'Please enter email';
-            if (!v!.contains('@')) return 'Enter a valid email';
-            return null;
-          },
-        ),
-        const SizedBox(height: 14),
-
-        _label('Mobile Number'),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: _phoneCtrl,
-          keyboardType: TextInputType.phone,
-          textInputAction: TextInputAction.next,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(10)],
-          decoration: _deco('10-digit mobile number', Icons.phone_outlined).copyWith(
-            prefixText: '+91  ',
-            prefixStyle: const TextStyle(fontSize: 14, color: AppColors.gray600,
-                fontWeight: FontWeight.w500),
-          ),
-          validator: (v) {
-            if (v?.trim().isEmpty ?? true) return 'Please enter mobile number';
-            if (v!.trim().length != 10) return 'Enter a valid 10-digit number';
-            return null;
-          },
-        ),
-        const SizedBox(height: 14),
-
-        _label('Create Password'),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: _passCtrl,
-          obscureText: _obscureP,
-          textInputAction: TextInputAction.next,
-          decoration: _deco('Min. 6 characters', Icons.lock_outline).copyWith(
-            suffixIcon: _eyeBtn(_obscureP, () =>
-                setState(() => _obscureP = !_obscureP)),
-          ),
-          validator: (v) {
-            if (v?.isEmpty ?? true) return 'Please create a password';
-            if (v!.length < 6) return 'Password must be at least 6 characters';
-            return null;
-          },
-        ),
-        const SizedBox(height: 14),
-
-        _label('Confirm Password'),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: _confirmCtrl,
-          obscureText: _obscureC,
-          textInputAction: TextInputAction.done,
-          decoration: _deco('Re-enter password', Icons.lock_outline).copyWith(
-            suffixIcon: _eyeBtn(_obscureC, () =>
-                setState(() => _obscureC = !_obscureC)),
-          ),
-          validator: (v) {
-            if (v?.isEmpty ?? true) return 'Please confirm your password';
-            if (v != _passCtrl.text) return 'Passwords do not match';
-            return null;
-          },
-        ),
-
-        if (_error != null) _errorBox(_error!),
-        const SizedBox(height: 22),
-
-        SizedBox(width: double.infinity, height: 50,
-          child: ElevatedButton(
-            onPressed: _loading ? null : _register,
-            style: _btnStyle(),
-            child: _loading
-                ? _spinner()
-                : const Text('Create Account & Send OTP',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        Center(child: _toggleText(
-          'Already have an account? ', 'Login',
-              () => setState(() { _mode = _Mode.login; _error = null; _formKey.currentState?.reset(); }),
-        )),
-      ]),
-    );
-  }
-
-  // ── OTP VERIFY ───────────────────────────────────────────
-  Widget _buildOtpVerify() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _title(Icons.sms_outlined, 'Verify Mobile',
-          'Enter the 6-digit OTP sent to +91 ${_phoneCtrl.text}'),
+  // ── REGISTER ─────────────────────────────────────────────
+  Widget _buildRegister() => Form(
+    key: _formKey,
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _title(Icons.person_add_outlined, 'Create Account',
+          'Register to access the POS system'),
       const SizedBox(height: 24),
 
-      _label('OTP Code'),
+      _label('Full Name'),
       const SizedBox(height: 6),
-      TextField(
-        controller: _otpCtrl,
-        keyboardType: TextInputType.number,
-        maxLength: 6,
-        textAlign: TextAlign.center,
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800,
-            letterSpacing: 12),
-        decoration: _deco('', Icons.pin_outlined).copyWith(
-          counterText: '',
-          hintText: '------',
-          hintStyle: const TextStyle(fontSize: 24, letterSpacing: 12,
-              color: AppColors.gray300),
+      TextFormField(
+        controller: _nameCtrl,
+        textInputAction: TextInputAction.next,
+        decoration: _deco('Enter your full name', Icons.person_outline),
+        validator: (v) =>
+        (v?.trim().isEmpty ?? true) ? 'Please enter your name' : null,
+      ),
+      const SizedBox(height: 14),
+
+      _label('Email Address'),
+      const SizedBox(height: 6),
+      TextFormField(
+        controller: _emailCtrl,
+        keyboardType: TextInputType.emailAddress,
+        textInputAction: TextInputAction.next,
+        decoration: _deco('Enter your email', Icons.email_outlined),
+        validator: (v) {
+          if (v?.trim().isEmpty ?? true) return 'Please enter email';
+          if (!RegExp(r'^[\w-.]+@([\w-]+\.)+[\w]{2,4}$').hasMatch(v!.trim()))
+            return 'Enter a valid email address';
+          return null;
+        },
+      ),
+      const SizedBox(height: 14),
+
+      _label('Mobile Number'),
+      const SizedBox(height: 6),
+      TextFormField(
+        controller: _phoneCtrl,
+        keyboardType: TextInputType.phone,
+        textInputAction: TextInputAction.next,
+        inputFormatters: [
+          FilteringTextInputFormatter.digitsOnly,
+          LengthLimitingTextInputFormatter(10),
+        ],
+        decoration: _deco('10-digit mobile number', Icons.phone_outlined).copyWith(
+          prefixText: '+91  ',
+          prefixStyle: const TextStyle(fontSize: 14,
+              color: AppColors.gray600, fontWeight: FontWeight.w500),
         ),
+        validator: (v) {
+          if (v?.trim().isEmpty ?? true) return 'Please enter mobile number';
+          if (v!.trim().length != 10) return 'Enter valid 10-digit number';
+          return null;
+        },
+      ),
+      const SizedBox(height: 14),
+
+      _label('Create Password'),
+      const SizedBox(height: 6),
+      TextFormField(
+        controller: _passCtrl,
+        obscureText: _obscureP,
+        textInputAction: TextInputAction.next,
+        decoration: _deco('Min. 6 characters', Icons.lock_outline).copyWith(
+          suffixIcon: _eyeBtn(_obscureP, () =>
+              setState(() => _obscureP = !_obscureP)),
+        ),
+        validator: (v) {
+          if (v?.isEmpty ?? true) return 'Please create a password';
+          if (v!.length < 6) return 'Password must be at least 6 characters';
+          return null;
+        },
+      ),
+      const SizedBox(height: 14),
+
+      _label('Confirm Password'),
+      const SizedBox(height: 6),
+      TextFormField(
+        controller: _confirmCtrl,
+        obscureText: _obscureC,
+        textInputAction: TextInputAction.done,
+        decoration: _deco('Re-enter password', Icons.lock_outline).copyWith(
+          suffixIcon: _eyeBtn(_obscureC, () =>
+              setState(() => _obscureC = !_obscureC)),
+        ),
+        validator: (v) {
+          if (v?.isEmpty ?? true) return 'Please confirm your password';
+          if (v != _passCtrl.text) return 'Passwords do not match';
+          return null;
+        },
+      ),
+
+      // Info box — email verification note
+      const SizedBox(height: 14),
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.teal50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.teal100),
+        ),
+        child: const Row(children: [
+          Icon(Icons.info_outline, size: 16, color: AppColors.teal600),
+          SizedBox(width: 8),
+          Expanded(child: Text(
+            'A verification email will be sent to confirm your account.',
+            style: TextStyle(fontSize: 12, color: AppColors.teal700),
+          )),
+        ]),
       ),
 
       if (_error != null) _errorBox(_error!),
@@ -534,30 +524,100 @@ class _LoginScreenState extends State<LoginScreen> {
 
       SizedBox(width: double.infinity, height: 50,
         child: ElevatedButton(
-          onPressed: _loading ? null : _verifyOtp,
+          onPressed: _loading ? null : _register,
           style: _btnStyle(),
           child: _loading ? _spinner()
-              : const Text('Verify & Complete Registration',
+              : const Text('Create Account',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        ),
+      ),
+      const SizedBox(height: 16),
+      Center(child: _toggleText('Already have an account? ', 'Login',
+              () => setState(() {
+            _mode = _Mode.login;
+            _error = null;
+            _formKey.currentState?.reset();
+          }))),
+    ]),
+  );
+
+  // ── VERIFY EMAIL ─────────────────────────────────────────
+  Widget _buildVerifyEmail() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      _title(Icons.mark_email_unread_outlined, 'Verify Your Email',
+          'Check your inbox and click the verification link'),
+      const SizedBox(height: 24),
+
+      Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: AppColors.teal50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.teal100),
+        ),
+        child: Column(children: [
+          const Icon(Icons.email_outlined, size: 48, color: AppColors.teal600),
+          const SizedBox(height: 12),
+          Text('Email sent to:\n${_emailCtrl.text.trim()}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
+                  color: AppColors.teal700)),
+          const SizedBox(height: 8),
+          const Text(
+            'Click the link in the email to verify.\nThen come back and click "I have verified".',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: AppColors.teal600),
+          ),
+        ]),
+      ),
+
+      if (_infoMsg != null) Padding(
+        padding: const EdgeInsets.only(top: 14),
+        child: Text(_infoMsg!, style: const TextStyle(
+            fontSize: 12, color: AppColors.gray500)),
+      ),
+      if (_error != null) _errorBox(_error!),
+      const SizedBox(height: 22),
+
+      SizedBox(width: double.infinity, height: 50,
+        child: ElevatedButton(
+          onPressed: _loading ? null : _checkVerification,
+          style: _btnStyle(),
+          child: _loading ? _spinner()
+              : const Text('I have verified my email',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+        ),
+      ),
+      const SizedBox(height: 12),
+
+      SizedBox(width: double.infinity, height: 46,
+        child: OutlinedButton.icon(
+          onPressed: _loading ? null : _resendVerification,
+          icon: const Icon(Icons.refresh, size: 16),
+          label: const Text('Resend verification email'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.teal600,
+            side: const BorderSide(color: AppColors.teal600),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+          ),
         ),
       ),
       const SizedBox(height: 14),
 
-      Center(child: TextButton(
-        onPressed: _loading ? null : _sendOtp,
-        child: const Text('Resend OTP',
-            style: TextStyle(color: AppColors.teal600, fontWeight: FontWeight.w600)),
-      )),
-    ]);
-  }
+      Center(child: _toggleText('', 'Back to Login',
+              () => setState(() { _mode = _Mode.login; _error = null; _infoMsg = null; }))),
+    ],
+  );
 
   // ── FORGOT PASSWORD ───────────────────────────────────────
-  Widget _buildForgotPassword() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+  Widget _buildForgotPassword() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
       _title(Icons.lock_reset_outlined, 'Reset Password',
-          'Enter your email to receive a password reset link'),
+          'Enter your registered email to receive a reset link'),
       const SizedBox(height: 24),
-
       _label('Email Address'),
       const SizedBox(height: 6),
       TextField(
@@ -567,10 +627,8 @@ class _LoginScreenState extends State<LoginScreen> {
         onSubmitted: (_) => _sendResetEmail(),
         decoration: _deco('Enter your registered email', Icons.email_outlined),
       ),
-
       if (_error != null) _errorBox(_error!),
       const SizedBox(height: 22),
-
       SizedBox(width: double.infinity, height: 50,
         child: ElevatedButton(
           onPressed: _loading ? null : _sendResetEmail,
@@ -581,30 +639,26 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
       const SizedBox(height: 14),
-
       Center(child: _toggleText('Remember your password? ', 'Back to Login',
-            () => setState(() { _mode = _Mode.login; _error = null; }),
-      )),
-    ]);
-  }
-
-  // ── Shared UI helpers ─────────────────────────────────────
-  Widget _title(IconData icon, String title, String sub) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Row(children: [
-        Icon(icon, size: 18, color: AppColors.gray400),
-        const SizedBox(width: 8),
-        Text(title, style: AppTextStyles.h2.copyWith(fontWeight: FontWeight.w700)),
-      ]),
-      const SizedBox(height: 4),
-      Text(sub, style: const TextStyle(fontSize: 13, color: AppColors.gray400)),
+              () => setState(() { _mode = _Mode.login; _error = null; }))),
     ],
   );
 
-  Widget _label(String text) => Text(text,
-      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-          color: AppColors.gray700));
+  // ── Shared helpers ────────────────────────────────────────
+  Widget _title(IconData icon, String title, String sub) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Row(children: [
+      Icon(icon, size: 18, color: AppColors.gray400),
+      const SizedBox(width: 8),
+      Text(title, style: AppTextStyles.h2.copyWith(fontWeight: FontWeight.w700)),
+    ]),
+    const SizedBox(height: 4),
+    Text(sub, style: const TextStyle(fontSize: 13, color: AppColors.gray400)),
+  ],
+  );
+
+  Widget _label(String t) => Text(t, style: const TextStyle(
+      fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.gray700));
 
   Widget _errorBox(String msg) => Padding(
     padding: const EdgeInsets.only(top: 14),
@@ -616,8 +670,8 @@ class _LoginScreenState extends State<LoginScreen> {
       child: Row(children: [
         const Icon(Icons.error_outline, size: 16, color: AppColors.red500),
         const SizedBox(width: 8),
-        Expanded(child: Text(msg, style: const TextStyle(fontSize: 13,
-            color: AppColors.red700, fontWeight: FontWeight.w500))),
+        Expanded(child: Text(msg, style: const TextStyle(
+            fontSize: 13, color: AppColors.red700, fontWeight: FontWeight.w500))),
       ]),
     ),
   );

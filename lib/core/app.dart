@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'theme.dart';
 import 'theme_provider.dart';
 import 'routes.dart';
@@ -29,7 +30,9 @@ class POSApp extends StatelessWidget {
           initialRoute: AppRoutes.login,
           routes: {
             AppRoutes.login: (_) => const _LoginGate(),
-            AppRoutes.shell: (_) => const AppShell(),
+            AppRoutes.shell: (_) => AppShell(
+              userId: FirebaseAuth.instance.currentUser?.uid ?? 'default',
+            ),
           },
         );
       },
@@ -49,7 +52,8 @@ class _LoginGate extends StatelessWidget {
 }
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key});
+  final String userId;
+  const AppShell({super.key, required this.userId});
   @override
   State<AppShell> createState() => _AppShellState();
 }
@@ -73,7 +77,7 @@ class _AppShellState extends State<AppShell> {
       case AppRoutes.addProduct:   return const AddProductScreen();
       case AppRoutes.payment:      return const PaymentScreen();
       case AppRoutes.transactions: return const TransactionsScreen();
-      case AppRoutes.settings:     return const SettingsScreen(userId: 'default');
+      case AppRoutes.settings:     return SettingsScreen(userId: widget.userId);
       default:
         return const Center(
           child: Text('Coming soon…',
