@@ -171,9 +171,10 @@ class _LoginScreenState extends State<LoginScreen> {
       final email = _emailCtrl.text.trim();
       final phone = _phoneCtrl.text.trim();
 
-      // Check email already registered — BEFORE sending OTP
-      final methods = await _auth.fetchSignInMethodsForEmail(email);
-      if (methods.isNotEmpty) {
+      // Check email already registered via Firestore
+      final emailQuery = await _db.collection('users')
+          .where('email', isEqualTo: email).limit(1).get();
+      if (emailQuery.docs.isNotEmpty) {
         setState(() => _emailFieldError =
         'This email is already registered. Please login.');
         return;
