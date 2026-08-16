@@ -12,8 +12,8 @@ import 'package:mailer/smtp_server/gmail.dart';
 class EmailService {
   // Apna Gmail aur App Password yahan daalo
   static const _senderEmail    = 'noreply.posmail@gmail.com';   // ← change karo
-  static const _appPassword    = 'Saqib@1691';    // ← Gmail App Password
-  static const _senderName     = 'Shree Sarees POS';
+  static const _appPassword    = 'eimi lsnz zuku xmzh';    // ← Gmail App Password
+  static const _senderName     = 'Shree Sarees POSo';
 
   // ── Send OTP email ────────────────────────────────────────
   static Future<bool> sendOtpEmail({

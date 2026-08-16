@@ -8,14 +8,6 @@ import '../core/app_colors_ext.dart';
 import '../services/otp_service.dart';
 import '../services/email_service.dart';
 
-/// ─────────────────────────────────────────────────────────────
-///  LOGIN SCREEN v4  –  lib/screens/login_screen.dart
-///
-///  Login:  Email/Mobile + Password → Direct login (no OTP)
-///  Register: Name + Email + Mobile + Password + Confirm →
-///            Get OTP → OTP sent to email → Enter OTP →
-///            Account created + Welcome email sent
-/// ─────────────────────────────────────────────────────────────
 enum _Mode { login, register, enterOtp, forgotPassword }
 
 class LoginScreen extends StatefulWidget {
@@ -29,10 +21,15 @@ class _LoginScreenState extends State<LoginScreen> {
   final _auth       = FirebaseAuth.instance;
   final _db         = FirebaseFirestore.instance;
   final _otpService = OtpService();
-  final _formKey    = GlobalKey<FormState>();
 
-  // Controllers
-  final _loginIdCtrl = TextEditingController(); // email or mobile for login
+  final _loginFormKey    = GlobalKey<FormState>();
+  final _registerFormKey = GlobalKey<FormState>();
+
+  // Login controllers
+  final _loginIdCtrl = TextEditingController();
+  final _loginPassCtrl = TextEditingController();
+
+  // Register controllers
   final _nameCtrl    = TextEditingController();
   final _emailCtrl   = TextEditingController();
   final _phoneCtrl   = TextEditingController();
@@ -41,27 +38,55 @@ class _LoginScreenState extends State<LoginScreen> {
   final _otpCtrl     = TextEditingController();
   final _resetCtrl   = TextEditingController();
 
-  _Mode   _mode      = _Mode.login;
-  bool    _loading   = false;
-  bool    _obscureP  = true;
-  bool    _obscureC  = true;
-  bool    _rememberMe= false;
-  bool    _hasInput  = false;
-  String? _error;
-  String? _pendingEmail; // email waiting for OTP
+  _Mode   _mode       = _Mode.login;
+  bool    _loginLoading    = false;
+  bool    _registerLoading = false;
+  bool    _otpLoading      = false;
+  bool    _obscureLogin    = true;
+  bool    _obscureP        = true;
+  bool    _obscureC        = true;
+  bool    _rememberMe      = false;
+  bool    _hasLoginInput   = false;
+
+  // Field-level errors
+  String? _loginError;
+  String? _emailFieldError;
+  String? _phoneFieldError;
+  String? _registerGeneralError;
+  String? _otpError;
+  String? _forgotError;
+
+  String? _pendingEmail;
   String? _pendingName;
 
   @override
   void initState() {
     super.initState();
     _loadRememberMe();
-    _loginIdCtrl.addListener(_checkInput);
-    _passCtrl.addListener(_checkInput);
+    _loginIdCtrl.addListener(_checkLoginInput);
+    _loginPassCtrl.addListener(_checkLoginInput);
   }
 
-  void _checkInput() {
-    final has = _loginIdCtrl.text.isNotEmpty && _passCtrl.text.isNotEmpty;
-    if (has != _hasInput) setState(() => _hasInput = has);
+  void _checkLoginInput() {
+    final has = _loginIdCtrl.text.isNotEmpty && _loginPassCtrl.text.isNotEmpty;
+    if (has != _hasLoginInput) setState(() => _hasLoginInput = has);
+  }
+
+  // Clear all register fields — called on back/mode change
+  void _clearRegisterFields() {
+    _nameCtrl.clear();
+    _emailCtrl.clear();
+    _phoneCtrl.clear();
+    _passCtrl.clear();
+    _confirmCtrl.clear();
+    _otpCtrl.clear();
+    _emailFieldError   = null;
+    _phoneFieldError   = null;
+    _registerGeneralError = null;
+    _otpError          = null;
+    _pendingEmail      = null;
+    _pendingName       = null;
+    _registerFormKey.currentState?.reset();
   }
 
   Future<void> _loadRememberMe() async {
@@ -86,75 +111,83 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    for (final c in [_loginIdCtrl, _nameCtrl, _emailCtrl,
-      _phoneCtrl, _passCtrl, _confirmCtrl, _otpCtrl, _resetCtrl]) {
-      c.dispose();
-    }
+    _loginIdCtrl.dispose(); _loginPassCtrl.dispose();
+    _nameCtrl.dispose(); _emailCtrl.dispose(); _phoneCtrl.dispose();
+    _passCtrl.dispose(); _confirmCtrl.dispose();
+    _otpCtrl.dispose(); _resetCtrl.dispose();
     super.dispose();
   }
 
-  // ── LOGIN — email or mobile + password ────────────────────
+  // ── LOGIN ─────────────────────────────────────────────────
   Future<void> _login() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    setState(() { _loading = true; _error = null; });
-
+    if (!(_loginFormKey.currentState?.validate() ?? false)) return;
+    setState(() { _loginLoading = true; _loginError = null; });
     try {
       String email = _loginIdCtrl.text.trim();
 
-      // If mobile number entered, look up email from Firestore
+      // Mobile number se email lookup
       if (!email.contains('@')) {
         final q = await _db.collection('users')
             .where('phone', isEqualTo: email).limit(1).get();
         if (q.docs.isEmpty) {
-          setState(() => _error = 'No account found with this mobile number.');
+          setState(() => _loginError = 'No account found with this mobile number.');
           return;
         }
         email = q.docs.first.data()['email'] as String;
       }
 
-      await _auth.signInWithEmailAndPassword(
-        email:    email,
-        password: _passCtrl.text.trim(),
-      );
+      final cred = await _auth.signInWithEmailAndPassword(
+          email: email, password: _loginPassCtrl.text.trim());
 
       // Update last login
-      final uid = _auth.currentUser?.uid;
-      if (uid != null) {
-        await _db.collection('users').doc(uid).update({
-          'lastLogin': FieldValue.serverTimestamp(),
-        });
-      }
+      await _db.collection('users').doc(cred.user!.uid).update({
+        'lastLogin': FieldValue.serverTimestamp(),
+      });
 
       await _saveRememberMe();
       if (mounted) widget.onLoginSuccess();
 
     } on FirebaseAuthException catch (e) {
-      setState(() => _error = _err(e.code));
+      setState(() => _loginError = _err(e.code));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _loginLoading = false);
     }
   }
 
-  // ── REGISTER Step 1 — validate + send OTP ─────────────────
+  // ── REGISTER — validate + check duplicates + send OTP ────
   Future<void> _sendOtp() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    setState(() { _loading = true; _error = null; });
+    // Reset field errors
+    setState(() {
+      _emailFieldError      = null;
+      _phoneFieldError      = null;
+      _registerGeneralError = null;
+    });
+
+    if (!(_registerFormKey.currentState?.validate() ?? false)) return;
+
+    setState(() => _registerLoading = true);
 
     try {
-      final phone = _phoneCtrl.text.trim();
       final email = _emailCtrl.text.trim();
+      final phone = _phoneCtrl.text.trim();
 
-      // Check phone uniqueness
-      if (await _otpService.isPhoneRegistered(phone)) {
-        setState(() => _error =
-        'This mobile number is already registered with a different account.');
+      // Check email already registered — BEFORE sending OTP
+      final methods = await _auth.fetchSignInMethodsForEmail(email);
+      if (methods.isNotEmpty) {
+        setState(() => _emailFieldError =
+        'This email is already registered. Please login.');
         return;
       }
 
-      // Generate OTP and store in Firestore
-      final otp = await _otpService.generateAndStoreOtp(email);
+      // Check phone uniqueness — BEFORE sending OTP
+      if (await _otpService.isPhoneRegistered(phone)) {
+        setState(() => _phoneFieldError =
+        'This mobile number is already linked to another account.');
+        return;
+      }
 
-      // Send OTP email
+      // Generate + send OTP
+      final otp  = await _otpService.generateAndStoreOtp(email);
       final sent = await EmailService.sendOtpEmail(
         toEmail:  email,
         otp:      otp,
@@ -162,11 +195,12 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       if (!sent) {
-        setState(() => _error =
-        'Could not send OTP email. Check your internet connection.');
+        setState(() => _registerGeneralError =
+        'Could not send OTP. Check internet connection.');
         return;
       }
 
+      // Clear password fields for privacy before moving to OTP screen
       setState(() {
         _pendingEmail = email;
         _pendingName  = _nameCtrl.text.trim();
@@ -174,38 +208,35 @@ class _LoginScreenState extends State<LoginScreen> {
       });
 
     } on FirebaseAuthException catch (e) {
-      setState(() => _error = _err(e.code));
+      setState(() => _registerGeneralError = _err(e.code));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _registerLoading = false);
     }
   }
 
-  // ── REGISTER Step 2 — verify OTP + create account ─────────
+  // ── VERIFY OTP + CREATE ACCOUNT ───────────────────────────
   Future<void> _verifyOtpAndCreate() async {
     final entered = _otpCtrl.text.trim();
     if (entered.length != 6) {
-      setState(() => _error = 'Please enter the 6-digit OTP');
+      setState(() => _otpError = 'Please enter the 6-digit OTP');
       return;
     }
-
-    setState(() { _loading = true; _error = null; });
+    setState(() { _otpLoading = true; _otpError = null; });
 
     try {
-      // Verify OTP
       final result = await _otpService.verifyOtp(_pendingEmail!, entered);
-
       switch (result) {
         case OtpResult.invalid:
-          setState(() => _error = 'Incorrect OTP. Please try again.');
+          setState(() => _otpError = 'Incorrect OTP. Please try again.');
           return;
         case OtpResult.expired:
-          setState(() => _error = 'OTP has expired. Please request a new one.');
+          setState(() => _otpError = 'OTP expired. Please go back and request a new one.');
           return;
         case OtpResult.alreadyUsed:
-          setState(() => _error = 'This OTP has already been used.');
+          setState(() => _otpError = 'This OTP has already been used.');
           return;
         case OtpResult.notFound:
-          setState(() => _error = 'OTP not found. Please request a new one.');
+          setState(() => _otpError = 'OTP not found. Please request a new one.');
           return;
         case OtpResult.success:
           break;
@@ -218,7 +249,7 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       await cred.user?.updateDisplayName(_pendingName!);
 
-      // Save user to Firestore
+      // Save to Firestore
       await _db.collection('users').doc(cred.user!.uid).set({
         'uid':       cred.user!.uid,
         'name':      _pendingName,
@@ -230,59 +261,56 @@ class _LoginScreenState extends State<LoginScreen> {
         'lastLogin': FieldValue.serverTimestamp(),
       });
 
-      // Send welcome email (don't await — let it run in background)
+      // Welcome email (background)
       EmailService.sendWelcomeEmail(
         toEmail:  _pendingEmail!,
         userName: _pendingName!,
       );
 
+      // Clear all fields
+      _clearRegisterFields();
+
       if (mounted) {
-        _showSnack('Account created successfully! Welcome, $_pendingName!',
-            AppColors.teal600);
-        // Auto login
+        _showSnack('Account created! Welcome, $_pendingName!', AppColors.teal600);
+        // Direct login — go to main screen
         widget.onLoginSuccess();
       }
 
     } on FirebaseAuthException catch (e) {
-      setState(() => _error = _err(e.code));
+      setState(() => _otpError = _err(e.code));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _otpLoading = false);
     }
   }
 
-  // ── RESEND OTP ────────────────────────────────────────────
   Future<void> _resendOtp() async {
     if (_pendingEmail == null) return;
-    setState(() { _loading = true; _error = null; });
+    setState(() { _otpLoading = true; _otpError = null; });
     try {
       final otp = await _otpService.generateAndStoreOtp(_pendingEmail!);
       await EmailService.sendOtpEmail(
-        toEmail:  _pendingEmail!,
-        otp:      otp,
-        userName: _pendingName ?? '',
-      );
+          toEmail: _pendingEmail!, otp: otp, userName: _pendingName ?? '');
       _showSnack('OTP resent to $_pendingEmail', AppColors.teal600);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _otpLoading = false);
     }
   }
 
-  // ── FORGOT PASSWORD ───────────────────────────────────────
   Future<void> _sendResetEmail() async {
     final email = _resetCtrl.text.trim();
     if (email.isEmpty) {
-      setState(() => _error = 'Please enter your email address');
+      setState(() => _forgotError = 'Please enter your email address');
       return;
     }
-    setState(() { _loading = true; _error = null; });
+    setState(() { _otpLoading = true; _forgotError = null; });
     try {
       await _auth.sendPasswordResetEmail(email: email);
-      _showSnack('Password reset link sent to $email', AppColors.teal600);
-      setState(() => _mode = _Mode.login);
+      _showSnack('Reset link sent to $email', AppColors.teal600);
+      setState(() { _mode = _Mode.login; _forgotError = null; });
     } on FirebaseAuthException catch (e) {
-      setState(() => _error = _err(e.code));
+      setState(() => _forgotError = _err(e.code));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _otpLoading = false);
     }
   }
 
@@ -298,20 +326,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
   String _err(String code) {
     switch (code) {
-      case 'user-not-found':          return 'No account found with this email.';
-      case 'wrong-password':          return 'Incorrect password. Please try again.';
-      case 'invalid-credential':      return 'Invalid email or password.';
-      case 'invalid-email':           return 'Please enter a valid email address.';
-      case 'email-already-in-use':    return 'This email is already registered. Please login.';
-      case 'weak-password':           return 'Password must be at least 6 characters.';
-      case 'too-many-requests':       return 'Too many attempts. Please try again later.';
-      case 'network-request-failed':  return 'No internet connection. Please check and try again.';
+      case 'user-not-found':         return 'No account found with this email.';
+      case 'wrong-password':         return 'Incorrect password. Please try again.';
+      case 'invalid-credential':     return 'Invalid email or password.';
+      case 'invalid-email':          return 'Please enter a valid email address.';
+      case 'email-already-in-use':   return 'This email is already registered. Please login.';
+      case 'weak-password':          return 'Password must be at least 6 characters.';
+      case 'too-many-requests':      return 'Too many attempts. Please try again later.';
+      case 'network-request-failed': return 'No internet connection.';
       default: return 'Something went wrong. Please try again.';
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  //  BUILD
   // ═══════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
@@ -346,7 +372,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   fontWeight: FontWeight.w600, letterSpacing: 2.5)),
               const SizedBox(height: 32),
 
-              // Card
               Container(
                 decoration: BoxDecoration(
                   color: AppColors.white,
@@ -360,7 +385,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   Container(height: 4, decoration: const BoxDecoration(
                       gradient: LinearGradient(
                           colors: [AppColors.teal600, AppColors.teal700]))),
-                  Padding(padding: const EdgeInsets.all(32),
+                  Padding(
+                      padding: const EdgeInsets.all(32),
                       child: _buildContent()),
                 ]),
               ),
@@ -383,11 +409,12 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ── LOGIN FORM ────────────────────────────────────────────
+  // ── LOGIN ─────────────────────────────────────────────────
   Widget _buildLogin() => Form(
-    key: _formKey,
+    key: _loginFormKey,
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _title(Icons.lock_outline, 'Secure Login', 'Sign in with email or mobile number'),
+      _title(Icons.lock_outline, 'Secure Login',
+          'Sign in with email or mobile number'),
       const SizedBox(height: 24),
 
       _label('Email Address or Mobile Number'),
@@ -397,30 +424,26 @@ class _LoginScreenState extends State<LoginScreen> {
         keyboardType: TextInputType.emailAddress,
         textInputAction: TextInputAction.next,
         decoration: _deco('Enter email or 10-digit mobile', Icons.person_outline),
-        validator: (v) {
-          if (v?.trim().isEmpty ?? true) return 'Please enter email or mobile number';
-          return null;
-        },
+        validator: (v) => (v?.trim().isEmpty ?? true)
+            ? 'Please enter email or mobile number' : null,
       ),
       const SizedBox(height: 16),
 
       _label('Password'),
       const SizedBox(height: 6),
       TextFormField(
-        controller: _passCtrl,
-        obscureText: _obscureP,
+        controller: _loginPassCtrl,
+        obscureText: _obscureLogin,
         textInputAction: TextInputAction.done,
-        onFieldSubmitted: (_) { if (_hasInput && !_loading) _login(); },
+        onFieldSubmitted: (_) { if (_hasLoginInput && !_loginLoading) _login(); },
         decoration: _deco('Enter your password', Icons.lock_outline).copyWith(
-          suffixIcon: _eyeBtn(_obscureP,
-                  () => setState(() => _obscureP = !_obscureP)),
+          suffixIcon: _eyeBtn(_obscureLogin,
+                  () => setState(() => _obscureLogin = !_obscureLogin)),
         ),
-        validator: (v) =>
-        (v?.isEmpty ?? true) ? 'Please enter password' : null,
+        validator: (v) => (v?.isEmpty ?? true) ? 'Please enter password' : null,
       ),
       const SizedBox(height: 14),
 
-      // Remember me + Forgot password
       Row(children: [
         SizedBox(width: 20, height: 20, child: Checkbox(
           value: _rememberMe,
@@ -433,40 +456,38 @@ class _LoginScreenState extends State<LoginScreen> {
             style: TextStyle(fontSize: 13, color: AppColors.gray600)),
         const Spacer(),
         GestureDetector(
-          onTap: () => setState(() { _mode = _Mode.forgotPassword; _error = null; }),
+          onTap: () => setState(() { _mode = _Mode.forgotPassword; _loginError = null; }),
           child: const Text('Forgot Password?', style: TextStyle(
-              fontSize: 13, color: AppColors.teal600,
-              fontWeight: FontWeight.w600)),
+              fontSize: 13, color: AppColors.teal600, fontWeight: FontWeight.w600)),
         ),
       ]),
 
-      if (_error != null) _errorBox(_error!),
+      if (_loginError != null) _errorBox(_loginError!),
       const SizedBox(height: 22),
 
       SizedBox(width: double.infinity, height: 50,
         child: ElevatedButton(
-          onPressed: _hasInput && !_loading ? _login : null,
+          onPressed: _hasLoginInput && !_loginLoading ? _login : null,
           style: _btnStyle(),
-          child: _loading ? _spinner()
+          child: _loginLoading ? _spinner()
               : const Text('Login', style: TextStyle(
               fontSize: 15, fontWeight: FontWeight.w700)),
         ),
       ),
       const SizedBox(height: 16),
       Center(child: _toggleText("Don't have an account? ", 'Register',
-              () => setState(() {
-            _mode = _Mode.register; _error = null;
-            _formKey.currentState?.reset();
-          }))),
+              () {
+            _clearRegisterFields();
+            setState(() { _mode = _Mode.register; _loginError = null; });
+          })),
     ]),
   );
 
-  // ── REGISTER FORM ─────────────────────────────────────────
+  // ── REGISTER ─────────────────────────────────────────────
   Widget _buildRegister() => Form(
-    key: _formKey,
+    key: _registerFormKey,
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _title(Icons.person_add_outlined, 'Create Account',
-          'Fill details to register'),
+      _title(Icons.person_add_outlined, 'Create Account', 'Fill details to register'),
       const SizedBox(height: 20),
 
       _label('Full Name'),
@@ -475,8 +496,7 @@ class _LoginScreenState extends State<LoginScreen> {
         controller: _nameCtrl,
         textInputAction: TextInputAction.next,
         decoration: _deco('Enter your full name', Icons.person_outline),
-        validator: (v) =>
-        (v?.trim().isEmpty ?? true) ? 'Please enter your name' : null,
+        validator: (v) => (v?.trim().isEmpty ?? true) ? 'Please enter your name' : null,
       ),
       const SizedBox(height: 12),
 
@@ -486,11 +506,15 @@ class _LoginScreenState extends State<LoginScreen> {
         controller: _emailCtrl,
         keyboardType: TextInputType.emailAddress,
         textInputAction: TextInputAction.next,
-        decoration: _deco('Enter your email', Icons.email_outlined),
+        // Clear email error on typing
+        onChanged: (_) => setState(() => _emailFieldError = null),
+        decoration: _deco('Enter your email', Icons.email_outlined).copyWith(
+          errorText: _emailFieldError,
+        ),
         validator: (v) {
           if (v?.trim().isEmpty ?? true) return 'Please enter email';
-          if (!RegExp(r'^[\w-.]+@([\w-]+\.)+[\w]{2,4}$')
-              .hasMatch(v!.trim())) return 'Enter a valid email address';
+          if (!RegExp(r'^[\w-.]+@([\w-]+\.)+[\w]{2,4}$').hasMatch(v!.trim()))
+            return 'Enter a valid email address';
           return null;
         },
       ),
@@ -502,6 +526,7 @@ class _LoginScreenState extends State<LoginScreen> {
         controller: _phoneCtrl,
         keyboardType: TextInputType.phone,
         textInputAction: TextInputAction.next,
+        onChanged: (_) => setState(() => _phoneFieldError = null),
         inputFormatters: [
           FilteringTextInputFormatter.digitsOnly,
           LengthLimitingTextInputFormatter(10),
@@ -510,7 +535,8 @@ class _LoginScreenState extends State<LoginScreen> {
           prefixText: '+91  ',
           prefixStyle: const TextStyle(fontSize: 14,
               color: AppColors.gray600, fontWeight: FontWeight.w500),
-          helperText: 'One account per mobile number',
+          errorText: _phoneFieldError,
+          helperText: _phoneFieldError == null ? 'One account per mobile number' : null,
           helperStyle: const TextStyle(fontSize: 11, color: AppColors.gray400),
         ),
         validator: (v) {
@@ -528,8 +554,7 @@ class _LoginScreenState extends State<LoginScreen> {
         obscureText: _obscureP,
         textInputAction: TextInputAction.next,
         decoration: _deco('Min. 6 characters', Icons.lock_outline).copyWith(
-          suffixIcon: _eyeBtn(_obscureP,
-                  () => setState(() => _obscureP = !_obscureP)),
+          suffixIcon: _eyeBtn(_obscureP, () => setState(() => _obscureP = !_obscureP)),
         ),
         validator: (v) {
           if (v?.isEmpty ?? true) return 'Please create a password';
@@ -546,8 +571,7 @@ class _LoginScreenState extends State<LoginScreen> {
         obscureText: _obscureC,
         textInputAction: TextInputAction.done,
         decoration: _deco('Re-enter password', Icons.lock_outline).copyWith(
-          suffixIcon: _eyeBtn(_obscureC,
-                  () => setState(() => _obscureC = !_obscureC)),
+          suffixIcon: _eyeBtn(_obscureC, () => setState(() => _obscureC = !_obscureC)),
         ),
         validator: (v) {
           if (v?.isEmpty ?? true) return 'Please confirm your password';
@@ -557,33 +581,28 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
       const SizedBox(height: 12),
 
-      // Info note
       Container(
         padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppColors.teal50,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.teal100),
-        ),
+        decoration: BoxDecoration(color: AppColors.teal50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.teal100)),
         child: const Row(children: [
           Icon(Icons.info_outline, size: 16, color: AppColors.teal600),
           SizedBox(width: 8),
-          Expanded(child: Text(
-            'An OTP will be sent to your email to verify your account.',
-            style: TextStyle(fontSize: 12, color: AppColors.teal700),
-          )),
+          Expanded(child: Text('An OTP will be sent to your email to verify your account.',
+              style: TextStyle(fontSize: 12, color: AppColors.teal700))),
         ]),
       ),
 
-      if (_error != null) _errorBox(_error!),
+      if (_registerGeneralError != null) _errorBox(_registerGeneralError!),
       const SizedBox(height: 20),
 
       SizedBox(width: double.infinity, height: 50,
         child: ElevatedButton.icon(
-          onPressed: _loading ? null : _sendOtp,
-          icon: _loading ? const SizedBox()
-              : const Icon(Icons.send_outlined, size: 18),
-          label: _loading ? _spinner()
+          onPressed: _registerLoading ? null : _sendOtp,
+          icon: _registerLoading
+              ? const SizedBox() : const Icon(Icons.send_outlined, size: 18),
+          label: _registerLoading ? _spinner()
               : const Text('Get OTP', style: TextStyle(
               fontSize: 15, fontWeight: FontWeight.w700)),
           style: _btnStyle(),
@@ -591,10 +610,10 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
       const SizedBox(height: 16),
       Center(child: _toggleText('Already have an account? ', 'Login',
-              () => setState(() {
-            _mode = _Mode.login; _error = null;
-            _formKey.currentState?.reset();
-          }))),
+              () {
+            _clearRegisterFields();
+            setState(() { _mode = _Mode.login; });
+          })),
     ]),
   );
 
@@ -606,27 +625,20 @@ class _LoginScreenState extends State<LoginScreen> {
           'We sent a 6-digit OTP to $_pendingEmail'),
       const SizedBox(height: 24),
 
-      // OTP sent info box
       Container(
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.teal50,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: AppColors.teal100),
-        ),
+        decoration: BoxDecoration(color: AppColors.teal50,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.teal100)),
         child: Row(children: [
           const Icon(Icons.email_outlined, color: AppColors.teal600, size: 20),
           const SizedBox(width: 10),
-          Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('OTP sent to:', style: TextStyle(
-                  fontSize: 12, color: AppColors.teal600)),
-              Text(_pendingEmail ?? '', style: const TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w700,
-                  color: AppColors.teal700)),
-            ],
-          )),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('OTP sent to:', style: TextStyle(
+                fontSize: 12, color: AppColors.teal600)),
+            Text(_pendingEmail ?? '', style: const TextStyle(
+                fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.teal700)),
+          ])),
         ]),
       ),
       const SizedBox(height: 20),
@@ -638,6 +650,7 @@ class _LoginScreenState extends State<LoginScreen> {
         keyboardType: TextInputType.number,
         maxLength: 6,
         textAlign: TextAlign.center,
+        onChanged: (_) => setState(() => _otpError = null),
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900,
             letterSpacing: 14, color: AppColors.teal600),
@@ -646,8 +659,7 @@ class _LoginScreenState extends State<LoginScreen> {
           hintText: '------',
           hintStyle: const TextStyle(fontSize: 28, letterSpacing: 14,
               color: AppColors.gray200),
-          filled: true,
-          fillColor: AppColors.gray50,
+          filled: true, fillColor: AppColors.gray50,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
               borderSide: const BorderSide(color: AppColors.gray200)),
           enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
@@ -661,15 +673,15 @@ class _LoginScreenState extends State<LoginScreen> {
       const Text('OTP is valid for 10 minutes',
           style: TextStyle(fontSize: 11, color: AppColors.gray400)),
 
-      if (_error != null) _errorBox(_error!),
+      if (_otpError != null) _errorBox(_otpError!),
       const SizedBox(height: 22),
 
       SizedBox(width: double.infinity, height: 50,
         child: ElevatedButton(
-          onPressed: _loading ? null : _verifyOtpAndCreate,
+          onPressed: _otpLoading ? null : _verifyOtpAndCreate,
           style: _btnStyle(),
-          child: _loading ? _spinner()
-              : const Text('Verify OTP & Create Account',
+          child: _otpLoading ? _spinner()
+              : const Text('Confirm & Create Account',
               style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
         ),
       ),
@@ -677,16 +689,17 @@ class _LoginScreenState extends State<LoginScreen> {
 
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         TextButton.icon(
-          onPressed: _loading ? null : _resendOtp,
+          onPressed: _otpLoading ? null : _resendOtp,
           icon: const Icon(Icons.refresh, size: 16, color: AppColors.teal600),
-          label: const Text('Resend OTP',
-              style: TextStyle(color: AppColors.teal600,
-                  fontWeight: FontWeight.w600)),
+          label: const Text('Resend OTP', style: TextStyle(
+              color: AppColors.teal600, fontWeight: FontWeight.w600)),
         ),
         TextButton(
-          onPressed: () => setState(() {
-            _mode = _Mode.register; _error = null; _otpCtrl.clear();
-          }),
+          // Go back to register — clear all fields for privacy
+          onPressed: () {
+            _clearRegisterFields();
+            setState(() => _mode = _Mode.register);
+          },
           child: const Text('Change Details',
               style: TextStyle(color: AppColors.gray400)),
         ),
@@ -708,22 +721,22 @@ class _LoginScreenState extends State<LoginScreen> {
         keyboardType: TextInputType.emailAddress,
         textInputAction: TextInputAction.done,
         onSubmitted: (_) => _sendResetEmail(),
-        decoration: _deco('Enter your email', Icons.email_outlined),
+        decoration: _deco('Enter your registered email', Icons.email_outlined),
       ),
-      if (_error != null) _errorBox(_error!),
+      if (_forgotError != null) _errorBox(_forgotError!),
       const SizedBox(height: 22),
       SizedBox(width: double.infinity, height: 50,
         child: ElevatedButton(
-          onPressed: _loading ? null : _sendResetEmail,
+          onPressed: _otpLoading ? null : _sendResetEmail,
           style: _btnStyle(),
-          child: _loading ? _spinner()
-              : const Text('Send Reset Link',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          child: _otpLoading ? _spinner()
+              : const Text('Send Reset Link', style: TextStyle(
+              fontSize: 15, fontWeight: FontWeight.w700)),
         ),
       ),
       const SizedBox(height: 14),
       Center(child: _toggleText('Remember password? ', 'Back to Login',
-              () => setState(() { _mode = _Mode.login; _error = null; }))),
+              () => setState(() { _mode = _Mode.login; _forgotError = null; _resetCtrl.clear(); }))),
     ],
   );
 
@@ -733,8 +746,7 @@ class _LoginScreenState extends State<LoginScreen> {
         Row(children: [
           Icon(icon, size: 18, color: AppColors.gray400),
           const SizedBox(width: 8),
-          Text(title, style: AppTextStyles.h2.copyWith(
-              fontWeight: FontWeight.w700)),
+          Text(title, style: AppTextStyles.h2.copyWith(fontWeight: FontWeight.w700)),
         ]),
         const SizedBox(height: 4),
         Text(sub, style: const TextStyle(fontSize: 13, color: AppColors.gray400)),
@@ -754,8 +766,7 @@ class _LoginScreenState extends State<LoginScreen> {
         const Icon(Icons.error_outline, size: 16, color: AppColors.red500),
         const SizedBox(width: 8),
         Expanded(child: Text(msg, style: const TextStyle(
-            fontSize: 13, color: AppColors.red700,
-            fontWeight: FontWeight.w500))),
+            fontSize: 13, color: AppColors.red700, fontWeight: FontWeight.w500))),
       ]),
     ),
   );
@@ -774,16 +785,13 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
   Widget _eyeBtn(bool obscure, VoidCallback onTap) => IconButton(
-    icon: Icon(obscure
-        ? Icons.visibility_off_outlined
-        : Icons.visibility_outlined,
+    icon: Icon(obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
         size: 18, color: AppColors.gray400),
     onPressed: onTap,
   );
 
   Widget _spinner() => const SizedBox(width: 22, height: 22,
-      child: CircularProgressIndicator(strokeWidth: 2,
-          color: AppColors.white));
+      child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.white));
 
   ButtonStyle _btnStyle() => ElevatedButton.styleFrom(
     backgroundColor: AppColors.teal600,
