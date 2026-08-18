@@ -421,37 +421,54 @@ class _UsersTabState extends State<_UsersTab> {
 
     setState(() => _changingPass = true);
     try {
-      final user  = _auth.currentUser!;
+      final user  = FirebaseAuth.instance.currentUser!;
       final email = user.email!;
+      final currentPass = _currentPassCtrl.text.trim();
+      final newPass     = _newPassCtrl.text.trim();
 
-      // Re-authenticate first
+      // Sign out and sign back in with new password
+      // This avoids the Windows thread issue with reauthenticate
       final cred = EmailAuthProvider.credential(
         email:    email,
-        password: _currentPassCtrl.text.trim(),
+        password: currentPass,
       );
+
+      // Step 1: reauthenticate
       await user.reauthenticateWithCredential(cred);
 
-      // Update password
-      await user.updatePassword(_newPassCtrl.text.trim());
+      // Step 2: small delay for Windows Firebase thread sync
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Step 3: update password
+      await FirebaseAuth.instance.currentUser!.updatePassword(newPass);
 
       _currentPassCtrl.clear();
       _newPassCtrl.clear();
       _confirmPassCtrl.clear();
 
       setState(() => _passSuccess = 'Password changed successfully!');
+
     } on FirebaseAuthException catch (e) {
       setState(() => _passError = _err(e.code));
+    } catch (e) {
+      setState(() => _passError = 'Failed to update password. Please try again.');
     } finally {
       if (mounted) setState(() => _changingPass = false);
     }
   }
 
   Future<void> _sendResetLink() async {
-    final email = _auth.currentUser?.email;
-    if (email == null) return;
+    final email = FirebaseAuth.instance.currentUser?.email;
+    if (email == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No email found for this account.'),
+        backgroundColor: AppColors.red500,
+      ));
+      return;
+    }
     setState(() => _sendingReset = true);
     try {
-      await _auth.sendPasswordResetEmail(email: email);
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Password reset link sent to $email'),
