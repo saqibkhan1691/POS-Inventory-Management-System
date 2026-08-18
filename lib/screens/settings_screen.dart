@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../core/theme.dart';
 import '../core/theme_provider.dart';
 import '../core/app_colors_ext.dart';
@@ -350,36 +352,352 @@ class _InventoryTabState extends State<_InventoryTab> {
   }
 }
 
-// ═════════════════════════════════════════════════════════════
-//  TAB 4 — USER & SECURITY (static for now, auth later)
-// ═════════════════════════════════════════════════════════════
-class _UsersTab extends StatelessWidget {
+/// ─────────────────────────────────────────────────────────────
+///  USER & SECURITY TAB
+///  Replace _UsersTab class in settings_screen.dart with this
+/// ─────────────────────────────────────────────────────────────
+class _UsersTab extends StatefulWidget {
   const _UsersTab();
   @override
+  State<_UsersTab> createState() => _UsersTabState();
+}
+
+class _UsersTabState extends State<_UsersTab> {
+  final _auth = FirebaseAuth.instance;
+  final _db   = FirebaseFirestore.instance;
+
+  final _currentPassCtrl = TextEditingController();
+  final _newPassCtrl     = TextEditingController();
+  final _confirmPassCtrl = TextEditingController();
+
+  bool _obscureCurrent = true;
+  bool _obscureNew     = true;
+  bool _obscureConfirm = true;
+  bool _changingPass   = false;
+  bool _sendingReset   = false;
+  String? _passError;
+  String? _passSuccess;
+
+  Map<String, dynamic>? _userData;
+  bool _loadingUser = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUser();
+  }
+
+  Future<void> _loadUser() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    final doc = await _db.collection('users').doc(uid).get();
+    setState(() {
+      _userData    = doc.data();
+      _loadingUser = false;
+    });
+  }
+
+  Future<void> _changePassword() async {
+    setState(() { _passError = null; _passSuccess = null; });
+
+    if (_currentPassCtrl.text.isEmpty ||
+        _newPassCtrl.text.isEmpty ||
+        _confirmPassCtrl.text.isEmpty) {
+      setState(() => _passError = 'Please fill all password fields.');
+      return;
+    }
+    if (_newPassCtrl.text.length < 6) {
+      setState(() => _passError = 'New password must be at least 6 characters.');
+      return;
+    }
+    if (_newPassCtrl.text != _confirmPassCtrl.text) {
+      setState(() => _passError = 'New passwords do not match.');
+      return;
+    }
+    if (_newPassCtrl.text == _currentPassCtrl.text) {
+      setState(() => _passError = 'New password cannot be same as current password.');
+      return;
+    }
+
+    setState(() => _changingPass = true);
+    try {
+      final user  = _auth.currentUser!;
+      final email = user.email!;
+
+      // Re-authenticate first
+      final cred = EmailAuthProvider.credential(
+        email:    email,
+        password: _currentPassCtrl.text.trim(),
+      );
+      await user.reauthenticateWithCredential(cred);
+
+      // Update password
+      await user.updatePassword(_newPassCtrl.text.trim());
+
+      _currentPassCtrl.clear();
+      _newPassCtrl.clear();
+      _confirmPassCtrl.clear();
+
+      setState(() => _passSuccess = 'Password changed successfully!');
+    } on FirebaseAuthException catch (e) {
+      setState(() => _passError = _err(e.code));
+    } finally {
+      if (mounted) setState(() => _changingPass = false);
+    }
+  }
+
+  Future<void> _sendResetLink() async {
+    final email = _auth.currentUser?.email;
+    if (email == null) return;
+    setState(() => _sendingReset = true);
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Password reset link sent to $email'),
+          backgroundColor: AppColors.teal600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _sendingReset = false);
+    }
+  }
+
+  String _err(String code) {
+    switch (code) {
+      case 'wrong-password':
+      case 'invalid-credential': return 'Current password is incorrect.';
+      case 'weak-password':      return 'New password is too weak.';
+      case 'too-many-requests':  return 'Too many attempts. Try again later.';
+      default: return 'Something went wrong. Please try again.';
+    }
+  }
+
+  @override
+  void dispose() {
+    _currentPassCtrl.dispose();
+    _newPassCtrl.dispose();
+    _confirmPassCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final c = context.colors;
+    final c   = context.colors;
+    final user = _auth.currentUser;
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _Header('User & Roles', 'Manage cashier accounts and permissions.'),
-      const SizedBox(height: 20),
+      // Header
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('User & Security', style: TextStyle(fontSize: 20,
+            fontWeight: FontWeight.w700, color: c.textPrimary)),
+        const SizedBox(height: 4),
+        Text('Manage your account and password.',
+            style: TextStyle(fontSize: 13, color: c.textMuted)),
+      ]),
+      const SizedBox(height: 24),
+
+      // ── Account Info Card ─────────────────────────────────
+      _sectionTitle('Account Information', c),
+      const SizedBox(height: 12),
       Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: c.inputFill,
+          color: c.cardBg,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: c.border),
         ),
-        child: Row(children: [
-          Icon(Icons.info_outline, color: c.textMuted, size: 20),
-          const SizedBox(width: 12),
-          Expanded(child: Text(
-            'Full user management will be available after Firebase Authentication is connected.',
-            style: TextStyle(fontSize: 13, color: c.textSecond),
-          )),
+        child: _loadingUser
+            ? const Center(child: CircularProgressIndicator())
+            : Column(children: [
+          _infoRow(Icons.person_outline, 'Full Name',
+              _userData?['name'] ?? user?.displayName ?? 'N/A', c),
+          Divider(height: 24, color: c.borderLight),
+          _infoRow(Icons.email_outlined, 'Email Address',
+              user?.email ?? 'N/A', c),
+          Divider(height: 24, color: c.borderLight),
+          _infoRow(Icons.phone_outlined, 'Mobile Number',
+              _userData?['phone'] != null
+                  ? '+91 ${_userData!['phone']}'
+                  : 'N/A', c),
+          Divider(height: 24, color: c.borderLight),
+          _infoRow(Icons.badge_outlined, 'Role',
+              (_userData?['role'] as String? ?? 'cashier').toUpperCase(), c),
+          Divider(height: 24, color: c.borderLight),
+          _infoRow(Icons.access_time_outlined, 'Last Login',
+              _userData?['lastLogin'] != null
+                  ? _formatTimestamp(_userData!['lastLogin'])
+                  : 'N/A', c),
+        ]),
+      ),
+
+      const SizedBox(height: 28),
+
+      // ── Change Password ───────────────────────────────────
+      _sectionTitle('Change Password', c),
+      const SizedBox(height: 12),
+      Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: c.cardBg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: c.border),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _passField('Current Password', _currentPassCtrl,
+              _obscureCurrent, () => setState(() => _obscureCurrent = !_obscureCurrent), c),
+          const SizedBox(height: 14),
+          _passField('New Password', _newPassCtrl,
+              _obscureNew, () => setState(() => _obscureNew = !_obscureNew), c),
+          const SizedBox(height: 14),
+          _passField('Confirm New Password', _confirmPassCtrl,
+              _obscureConfirm, () => setState(() => _obscureConfirm = !_obscureConfirm), c),
+
+          // Error / Success
+          if (_passError != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(color: AppColors.red50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.red100)),
+              child: Row(children: [
+                const Icon(Icons.error_outline, size: 16, color: AppColors.red500),
+                const SizedBox(width: 8),
+                Expanded(child: Text(_passError!, style: const TextStyle(
+                    fontSize: 13, color: AppColors.red700,
+                    fontWeight: FontWeight.w500))),
+              ]),
+            ),
+          ],
+          if (_passSuccess != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(color: AppColors.green100,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFBBF7D0))),
+              child: Row(children: [
+                const Icon(Icons.check_circle_outline, size: 16, color: AppColors.green700),
+                const SizedBox(width: 8),
+                Text(_passSuccess!, style: const TextStyle(
+                    fontSize: 13, color: AppColors.green700,
+                    fontWeight: FontWeight.w500)),
+              ]),
+            ),
+          ],
+
+          const SizedBox(height: 18),
+          Row(children: [
+            ElevatedButton(
+              onPressed: _changingPass ? null : _changePassword,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.teal600,
+                foregroundColor: AppColors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                elevation: 0,
+                textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+              ),
+              child: _changingPass
+                  ? const SizedBox(width: 18, height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.white))
+                  : const Text('Update Password'),
+            ),
+            const SizedBox(width: 12),
+            OutlinedButton.icon(
+              onPressed: _sendingReset ? null : _sendResetLink,
+              icon: _sendingReset
+                  ? const SizedBox(width: 14, height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.email_outlined, size: 16),
+              label: const Text('Send Reset Link to Email'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: c.textSecond,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                side: BorderSide(color: c.border),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ]),
         ]),
       ),
     ]);
   }
+
+  Widget _infoRow(IconData icon, String label, String value, AdaptiveColors c) =>
+      Row(children: [
+        Container(width: 36, height: 36,
+            decoration: BoxDecoration(color: c.inputFill,
+                borderRadius: BorderRadius.circular(8)),
+            child: Icon(icon, size: 18, color: AppColors.teal600)),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: TextStyle(fontSize: 11, color: c.textMuted,
+              fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(value, style: TextStyle(fontSize: 14, color: c.textPrimary,
+              fontWeight: FontWeight.w600)),
+        ])),
+      ]);
+
+  Widget _passField(String label, TextEditingController ctrl,
+      bool obscure, VoidCallback toggle, AdaptiveColors c) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+            color: c.textSecond)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: ctrl,
+          obscureText: obscure,
+          onChanged: (_) => setState(() { _passError = null; _passSuccess = null; }),
+          decoration: InputDecoration(
+            filled: true, fillColor: c.inputFill,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: c.border)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: c.border)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppColors.teal600, width: 2)),
+            hintText: 'Enter $label',
+            hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
+            suffixIcon: IconButton(
+              icon: Icon(obscure
+                  ? Icons.visibility_off_outlined
+                  : Icons.visibility_outlined,
+                  size: 18, color: c.textMuted),
+              onPressed: toggle,
+            ),
+          ),
+          style: TextStyle(fontSize: 14, color: c.textPrimary),
+        ),
+      ]);
+
+  Widget _sectionTitle(String title, AdaptiveColors c) => Row(children: [
+    Text(title.toUpperCase(), style: TextStyle(fontSize: 11,
+        fontWeight: FontWeight.w700, color: c.textPrimary, letterSpacing: 0.8)),
+    const SizedBox(width: 12),
+    Expanded(child: Divider(color: c.borderLight)),
+  ]);
+
+  String _formatTimestamp(dynamic ts) {
+    try {
+      final dt = (ts as dynamic).toDate() as DateTime;
+      return '${dt.day}/${dt.month}/${dt.year}  '
+          '${dt.hour > 12 ? dt.hour - 12 : dt.hour}:'
+          '${dt.minute.toString().padLeft(2,'0')} '
+          '${dt.hour >= 12 ? 'PM' : 'AM'}';
+    } catch (_) {
+      return 'N/A';
+    }
+  }
 }
+
 
 // ═════════════════════════════════════════════════════════════
 //  TAB 5 — BACKUP & SYNC

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../core/theme.dart';
 import '../core/routes.dart';
+import 'logout_dialog.dart';
 
 /// ─────────────────────────────────────────────────────────────
 ///  SIDEBAR  –  lib/widgets/sidebar.dart
@@ -105,7 +106,10 @@ class AppSidebar extends StatelessWidget {
                   label: 'Logout', icon: Icons.logout_outlined, route: AppRoutes.login),
               isActive: false,
               isDanger: true,
-              onTap: () => onRouteSelected(AppRoutes.login),
+              onTap: () => LogoutDialog.show(
+                context,
+                onConfirm: () => onRouteSelected(AppRoutes.login),
+              ),
             ),
           ),
         ],
