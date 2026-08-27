@@ -454,7 +454,9 @@ class _UsersTabState extends State<_UsersTab> {
       final email = FirebaseAuth.instance.currentUser?.email;
       if (email == null || email.isEmpty) return;
 
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      await Future(() async {
+        await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
