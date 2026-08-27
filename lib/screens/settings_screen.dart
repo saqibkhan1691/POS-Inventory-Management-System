@@ -415,67 +415,63 @@ class _UsersTabState extends State<_UsersTab> {
       return;
     }
     if (_newPassCtrl.text == _currentPassCtrl.text) {
-      setState(() => _passError = 'New password cannot be same as current password.');
+      setState(() => _passError = 'New password cannot be same as current.');
       return;
     }
 
     setState(() => _changingPass = true);
+
+    final email       = FirebaseAuth.instance.currentUser?.email ?? '';
+    final currentPass = _currentPassCtrl.text.trim();
+    final newPass     = _newPassCtrl.text.trim();
+
     try {
-      final user  = FirebaseAuth.instance.currentUser!;
-      final email = user.email!;
-      final currentPass = _currentPassCtrl.text.trim();
-      final newPass     = _newPassCtrl.text.trim();
+      // Re-login — Windows Firebase thread issue fix
+      final userCred = await FirebaseAuth.instance
+          .signInWithEmailAndPassword(email: email, password: currentPass);
 
-      // Sign out and sign back in with new password
-      // This avoids the Windows thread issue with reauthenticate
-      final cred = EmailAuthProvider.credential(
-        email:    email,
-        password: currentPass,
-      );
+      await Future.delayed(const Duration(milliseconds: 300));
 
-      // Step 1: reauthenticate
-      await user.reauthenticateWithCredential(cred);
-
-      // Step 2: small delay for Windows Firebase thread sync
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // Step 3: update password
-      await FirebaseAuth.instance.currentUser!.updatePassword(newPass);
+      await userCred.user!.updatePassword(newPass);
 
       _currentPassCtrl.clear();
       _newPassCtrl.clear();
       _confirmPassCtrl.clear();
-
       setState(() => _passSuccess = 'Password changed successfully!');
 
     } on FirebaseAuthException catch (e) {
       setState(() => _passError = _err(e.code));
     } catch (e) {
-      setState(() => _passError = 'Failed to update password. Please try again.');
+      setState(() => _passError = 'Failed. Please try again.');
     } finally {
       if (mounted) setState(() => _changingPass = false);
     }
   }
 
   Future<void> _sendResetLink() async {
-    final email = FirebaseAuth.instance.currentUser?.email;
-    if (email == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('No email found for this account.'),
-        backgroundColor: AppColors.red500,
-      ));
-      return;
-    }
     setState(() => _sendingReset = true);
     try {
+      final email = FirebaseAuth.instance.currentUser?.email;
+      if (email == null || email.isEmpty) return;
+
       await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Password reset link sent to $email'),
+          content: Text('Reset link sent to $email'),
           backgroundColor: AppColors.teal600,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           duration: const Duration(seconds: 3),
+        ));
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_err(e.code)),
+          backgroundColor: AppColors.red500,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ));
       }
     } finally {
