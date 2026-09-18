@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
+import 'app_settings_notifier.dart';
 
 /// ─────────────────────────────────────────────────────────────
 ///  APP LOCALIZATIONS  –  lib/core/app_localizations.dart
 ///  English / Hindi UI translation
 /// ─────────────────────────────────────────────────────────────
-final ValueNotifier<String> appLanguageNotifier = ValueNotifier('English');
 
 class AppLocalizations {
-  final String language;
-  const AppLocalizations(this.language);
-  bool get isHindi => language == 'Hindi';
+  final String _language;
+  const AppLocalizations(this._language);
+  bool get isHindi => _language == 'Hindi';
 
   // Sidebar
   String get billing          => isHindi ? 'बिलिंग'                    : 'Billing';

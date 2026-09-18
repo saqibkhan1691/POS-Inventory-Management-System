@@ -47,6 +47,8 @@ class AppColors {
   static const red700    = Color(0xFFB91C1C);
 
   static const white     = Color(0xFFFFFFFF);
+
+  static var red400;
 }
 
 class AppTextStyles {

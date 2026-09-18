@@ -6,8 +6,8 @@ import '../core/theme_provider.dart';
 import '../core/app_colors_ext.dart';
 import '../models/settings_model.dart';
 import '../repositories/settings_repository.dart';
+import '../core/app_localizations.dart' hide appLanguageNotifier;
 import '../core/app_settings_notifier.dart';
-import '../core/app_localizations.dart';
 
 /// ─────────────────────────────────────────────────────────────
 ///  SETTINGS SCREEN  –  lib/screens/settings_screen.dart
@@ -1303,3 +1303,81 @@ child: saving
 child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.white))
     : const Text('Save Changes'),
 );
+
+
+class _LangChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _LangChip(this.label, this.selected, this.onTap);
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.teal600 : c.cardBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+              color: selected ? AppColors.teal600 : c.border,
+              width: selected ? 2 : 1),
+        ),
+        child: Text(label, style: TextStyle(
+          fontSize: 14, fontWeight: FontWeight.w600,
+          color: selected ? AppColors.white : c.textSecond,
+        )),
+      ),
+    );
+  }
+}
+
+class _FormatOption extends StatelessWidget {
+  final String label, example;
+  final bool selected;
+  final VoidCallback onTap;
+  const _FormatOption({
+    required this.label, required this.example,
+    required this.selected, required this.onTap,
+  });
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.teal50 : c.cardBg,
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(
+              color: selected ? AppColors.teal600 : c.border,
+              width: selected ? 2 : 1),
+        ),
+        child: Row(children: [
+          Container(
+            width: 18, height: 18,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                  color: selected ? AppColors.teal600 : AppColors.gray300,
+                  width: selected ? 5 : 1.5),
+              color: AppColors.white,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Text(label, style: TextStyle(
+              fontSize: 14, fontWeight: FontWeight.w600,
+              color: selected ? AppColors.teal700 : c.textPrimary))),
+          Text(example, style: TextStyle(
+              fontSize: 12,
+              color: selected ? AppColors.teal600 : c.textMuted)),
+        ]),
+      ),
+    );
+  }
+}
